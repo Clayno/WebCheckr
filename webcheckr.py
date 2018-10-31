@@ -63,9 +63,11 @@ def wappalyzer(url):
             else:
                 print('    {0} ({1})'.format(name, version))
         print()
-    print(response["meta"])
     # return the modules found on the url
-    return [cms.split(':', 1)[0] for cms in found["CMS"]]
+    if "CMS" in found.keys():
+        return [cms.split(':', 1)[0] for cms in found["CMS"]]
+    else:
+        return None
 
 def cms_scanner(url, scanner):
     print("[+] Launching {0}".format(scanner))
@@ -106,7 +108,8 @@ if __name__ == "__main__":
     # Check if a known CMS is detected
     if cms is not None:    
         print("[+] {0} found !".format(cms[0]))
-        cms_scanner(url, scanners[cms[0]])
+        if cms[0] in scanners.keys():
+            cms_scanner(url, scanners[cms[0]])
         
     if directory_bf:
         print("[+] Getting back to bruteforcing results")
