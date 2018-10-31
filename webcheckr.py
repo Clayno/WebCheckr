@@ -9,8 +9,22 @@ images = {
         "Wappalyzer": "wappalyzer/cli",
         "Wpscan": "wpscanteam/wpscan",
         "Gobuster": "kodisha/gobuster",
-        "Joomscan", "pgrund/joomscan"
+        "Joomscan": "pgrund/joomscan",
+        "Drupwn": "immunit/drupwn"
         }
+
+commands = {
+        "Wpscan": "--url {0} --no-banner",
+        "Joomscan": "--url {0}",
+        "Drupwn": "enum {0}"
+        }
+
+scanners = {
+        "WordPress": "Wpscan",
+        "Joomla": "Joomscan",
+        "Drupal": "Drupwn"
+        }
+
 
 def print_banner():
     print(
@@ -52,13 +66,11 @@ def wappalyzer(url):
     print(response["meta"])
     # return the modules found on the url
     return [cms.split(':', 1)[0] for cms in found["CMS"]]
-    
-def wpscan(url):
-    print("[+] Launching WpScan, it may take some time...")
-    # Basic wpscan
-    command = "--url {0} --no-banner".format(url)
+
+def cms_scanner(url, scanner):
+    print("[+] Launching {0}".format(scanner))
     client = docker.from_env()
-    container = client.containers.run(images["Wpscan"], command, detach=True)
+    container = client.containers.run(images[scanner], commands[scanner].format(url), detach=True)
     for line in container.logs(stream=True):
         print(line.decode(), end="")
 
@@ -69,14 +81,6 @@ def gobuster(url):
     client = docker.from_env()
     container = client.containers.run(images["Gobuster"], command, detach=True)
     return container
-
-def joomscan(url):
-    print("[+] Launching Joomscan")
-    command = "--url {0} --no-banner".format(url)
-    client = docker.from_env()
-    container = client.containers.run(images["Joomscan"], command, detach=True)
-    for line in container.logs(stream=True):
-        print(line.decode(), end="")
 
 if __name__ == "__main__":
     import argparse
@@ -101,13 +105,9 @@ if __name__ == "__main__":
     cms = wappalyzer(url)
     # Check if a known CMS is detected
     if cms is not None:    
-        print("CMS found", cms)
-        if "WordPress" in cms:
-            print("[+] Wordpress found !")
-            wpscan(url)
-        if "Joomla" in cms:
-            print("[+] Joomla found !")
-            joomscan(url)
+        print("[+] {0} found !".format(cms[0]))
+        cms_scanner(url, scanners[cms[0]])
+        
     if directory_bf:
         print("[+] Getting back to bruteforcing results")
         for line in buster_container.logs(stream=True):
