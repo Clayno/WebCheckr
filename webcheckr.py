@@ -91,28 +91,41 @@ if __name__ == "__main__":
     parser.add_argument('-r', '--report',  action='store', help="Generate report to specified file - not implemented")
     parser.add_argument('-d', '--directory_bf', action='store_true', help='Launch directory bruteforce with common.txt from Seclist')
     parser.add_argument('-s', '--stealth', action='store_true', help='Be stealthy - not implemented')
-    parser.add_argument('url', help="URL of target site")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('-U', '--urls_file', action='store', help='Provide file instead of url, one per line')
+    group.add_argument('-u', '--url', help="URL of target site")
     args = parser.parse_args()
     # Arguments
     url =  args.url
     proxy = args.proxy
     file_report = args.report
     directory_bf = args.directory_bf
-
+    urls_file = args.urls_file
+    # L33t banner
     print_banner()
-    # Starting bruteforce of directory in background
-    if directory_bf:
-        buster_container = gobuster(url)
-    # Start analysing web application
-    cms = wappalyzer(url)
-    # Check if a known CMS is detected
-    if cms is not None:    
-        print("[+] {0} found !".format(cms[0]))
-        if cms[0] in scanners.keys():
-            cms_scanner(url, scanners[cms[0]])
-        
-    if directory_bf:
-        print("[+] Getting back to bruteforcing results")
-        for line in buster_container.logs(stream=True):
-            print(line.decode(), end="")
+    # Check if there is a list of urls
+    if urls_file is not None:
+        urls = open(urls_file).readlines()
+    else:
+        urls=[url]
+    # Start the scanning
+    for url in urls:
+        print("[+] Scanning {0}".format(url))
+        # Starting bruteforce of directory in background
+        if directory_bf:
+            buster_container = gobuster(url)
+        # Start analysing web application
+        cms = wappalyzer(url)
+        # Check if a known CMS is detected
+        if cms is not None:    
+            print("[+] {0} found !".format(cms[0]))
+            print()
+            if cms[0] in scanners.keys():
+                cms_scanner(url, scanners[cms[0]])
+        # Printing the directory bruteforce. Shouldn't block processing if multiple urls...
+        if directory_bf:
+            print("[+] Getting back to bruteforcing results")
+            for line in buster_container.logs(stream=True):
+                print(line.decode(), end="")
+            print()
     
