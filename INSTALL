@@ -1,0 +1,11 @@
+1 - First install docker and it's python sdk
+Refer to docker documentation for the installation.
+
+python3 -m pip install docker
+
+2 - Pull required images:
+docker pull wpscanteam/wpscan
+docker pull wappalyzer/cli
+docker pull kodisha/gobuster
+docker pull pgrund/joomscan
+
