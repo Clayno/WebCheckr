@@ -10,7 +10,8 @@ images = {
         "Wpscan": "wpscanteam/wpscan",
         "Gobuster": "kodisha/gobuster",
         "Joomscan": "pgrund/joomscan",
-        "Drupwn": "immunit/drupwn"
+        "Drupwn": "immunit/drupwn",
+        "CVE-search": "ttimasdf/cve-search:withdb"
         }
 
 commands = {
@@ -63,11 +64,7 @@ def wappalyzer(url):
             else:
                 print('    {0} ({1})'.format(name, version))
         print()
-    # return the modules found on the url
-    if "CMS" in found.keys():
-        return [cms.split(':', 1)[0] for cms in found["CMS"]]
-    else:
-        return None
+    return found
 
 def cms_scanner(url, scanner):
     print("[+] Launching {0}".format(scanner))
@@ -83,6 +80,22 @@ def gobuster(url):
     client = docker.from_env()
     container = client.containers.run(images["Gobuster"], command, detach=True)
     return container
+
+def cve_search():
+    command = "" 
+    client = docker.from_env()
+    container = client.containers.run(images["CVE-search"], command,
+            ports={
+                     5000: ('127.0.0.1', 5000)
+                     },detach=True)
+    return container
+
+def query_cve(name, version, container):
+    print("[+] Searching cve for {0} ({1})".format(name, version))
+    name = name.lower().replace(" ", ":")
+    command = "search.py -p '{0}:{1}'".format(name, version)
+    for line in container.exec_run(command, stream=True):
+        print(line.decode(), end="")
 
 if __name__ == "__main__":
     import argparse
@@ -108,24 +121,40 @@ if __name__ == "__main__":
         urls = open(urls_file).readlines()
     else:
         urls=[url]
-    # Start the scanning
-    for url in urls:
-        print("[+] Scanning {0}".format(url))
-        # Starting bruteforce of directory in background
-        if directory_bf:
-            buster_container = gobuster(url)
-        # Start analysing web application
-        cms = wappalyzer(url)
-        # Check if a known CMS is detected
-        if cms is not None:    
-            print("[+] {0} found !".format(cms[0]))
-            print()
-            if cms[0] in scanners.keys():
-                cms_scanner(url, scanners[cms[0]])
-        # Printing the directory bruteforce. Shouldn't block processing if multiple urls...
-        if directory_bf:
-            print("[+] Getting back to bruteforcing results")
-            for line in buster_container.logs(stream=True):
-                print(line.decode(), end="")
-            print()
+    print("[+] Starting the CVE-search docker")
+    cve_search = cve_search()
+    try:
+        # Start the scanning
+        for url in urls:
+            print("[+] Scanning {0}".format(url))
+            # Starting bruteforce of directory in background
+            if directory_bf:
+                buster_container = gobuster(url)
+            # Start analysing web application
+            found = wappalyzer(url)
+            # Maybe not for all the tech, we don't care for css, jquery,...
+            # https://www.wappalyzer.com/docs/categories
+            for category, l in found.items():
+                for tech in l:
+                    name, version = tech.split(':', 1)
+                    if version != "":
+                        query_cve(name, version, cve_search)
+            if "CMS" in found.keys():
+                cms = [cms.split(':', 1)[0] for cms in found["CMS"]]
+            else:
+                cms = None
+            # Check if a known CMS is detected
+            if cms is not None:    
+                print("[+] {0} found !".format(cms[0]))
+                print()
+                if cms[0] in scanners.keys():
+                    cms_scanner(url, scanners[cms[0]])
+            # Printing the directory bruteforce. Shouldn't block processing if multiple urls...
+            if directory_bf:
+                print("[+] Getting back to bruteforcing results")
+                for line in buster_container.logs(stream=True):
+                    print(line.decode(), end="")
+                print()
+    finally:
+        cve_search.kill()
     
