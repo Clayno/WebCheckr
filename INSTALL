@@ -9,5 +9,5 @@ docker pull wpscanteam/wpscan
 docker pull wappalyzer/cli
 docker pull kodisha/gobuster
 docker pull pgrund/joomscan
-docker pull ttimasdf/cve-search
+docker pull ttimasdf/cve-search -- takes a lot of time...
 
