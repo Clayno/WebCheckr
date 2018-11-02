@@ -1,6 +1,7 @@
-1 - First install docker and it's python sdk
+1 - First install docker and its python sdk
 Refer to docker documentation for the installation.
 
+For python:
 python3 -m pip install docker
 
 2 - Pull required images:
