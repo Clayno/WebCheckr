@@ -77,6 +77,7 @@ def wappalyzer(url):
     finally:
         remove_container(container)
 
+
 def cms_scanner(url, scanner):
     print_and_report("[+] Launching {0}".format(scanner))
     try:
@@ -112,7 +113,6 @@ def query_cve(name, version, container):
     exit_code, output = container.exec_run(command)
     print_and_report(output.decode())
     
-
 def remove_container(container):
     try: 
         statuses = ['removed', 'exited', 'dead']
@@ -127,6 +127,7 @@ def print_and_report(string='\n'):
         print(string, file=open(filename, 'a'))
     else:
         print(string, file=open(filename, 'w'))
+
 
 
 if __name__ == "__main__":
@@ -186,7 +187,7 @@ if __name__ == "__main__":
             else:
                 cms = None
             # Check if a known CMS is detected
-            if cms is not None:    
+            if cms is not None:   
                 print_and_report("[+] {0} found !".format(cms[0]))
                 print_and_report()
                 if cms[0] in scanners.keys():
@@ -199,4 +200,5 @@ if __name__ == "__main__":
                 print_and_report()
     finally:
         remove_container(cve_search)
+
     
