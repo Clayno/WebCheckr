@@ -11,3 +11,5 @@ docker pull kodisha/gobuster
 docker pull pgrund/joomscan
 docker pull ttimasdf/cve-search:withdb -- takes a lot of time...
 
+3 - Initiate docker image
+docker run --name cvesearch ttimasdf/cve-search:withdb

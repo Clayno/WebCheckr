@@ -48,9 +48,10 @@ def wappalyzer(url):
     # Wappalizer recursive with Chrome user-agent
     try: 
         # Should maybe be with the other comands ?
-        command = "{0} --recursive=1 --user-agent='Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.1 (KHTML, like Gecko) Chrome/21.0.1180.75 Safari/537.1'".format(url)
+        command = "{0}".format(url)
         client = docker.from_env()
-        container = client.containers.run(images["Wappalyzer"], command, detach=True)
+        container = client.containers.run(images["Wappalyzer"], command, detach=True,
+                auto_remove=True)
         response = ""
         for line in container.logs(stream=True):
             response += line.decode()
@@ -82,9 +83,10 @@ def cms_scanner(url, scanner):
     print_and_report("[+] Launching {0}".format(scanner))
     try:
         client = docker.from_env()
-        container = client.containers.run(images[scanner], commands[scanner].format(url), detach=True)
+        container = client.containers.run(images[scanner], commands[scanner].format(url), 
+                detach=True, auto_remove=True)
         for line in container.logs(stream=True):
-            print_and_report(line.decode(), end="")
+            print_and_report(line.decode())
     finally:
         remove_container(container)
 
@@ -102,8 +104,10 @@ def gobuster(url):
 def cve_search():
     command = "" 
     client = docker.from_env()
-    container = client.containers.run(images["CVE-search"], command,
-            ports={5000: ('127.0.0.1', 5000)} ,detach=True)
+    container = client.containers.get('cvesearch')
+    container.start()
+    #container = client.containers.run(images["CVE-search"], command,
+    #        ports={5000: ('127.0.0.1', 5000)} ,detach=True)
     return container
 
 def query_cve(name, version, container):
@@ -121,7 +125,7 @@ def remove_container(container):
     except:
         pass
 
-def print_and_report(string='\n'):
+def print_and_report(string=''):
     print(string)
     if os.path.exists(filename):
         print(string, file=open(filename, 'a'))
@@ -137,6 +141,7 @@ if __name__ == "__main__":
     parser  = argparse.ArgumentParser(description="WebCheckr - Initial check for web pentests")
     parser.add_argument('-p', '--proxy',  action='store', help="HTTP proxy to use - not implemented")
     parser.add_argument('-d', '--directory_bf', action='store_true', help='Launch directory bruteforce with common.txt from Seclist')
+    parser.add_argument('-n', '--no_cve_launch', action='store_true', help='Do not launch cve-search docker, you have to start it manually: docker start cvesearch')
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('-U', '--urls_file', action='store', help='Provide file instead of url, one per line')
     group.add_argument('-u', '--url', help="URL of target site")
@@ -146,6 +151,7 @@ if __name__ == "__main__":
     proxy = args.proxy
     directory_bf = args.directory_bf
     urls_file = args.urls_file
+    no_launch = args.no_cve_launch
     # L33t banner
     print_banner()
     # Check if there is a list of urls
@@ -154,20 +160,23 @@ if __name__ == "__main__":
     else:
         urls=[url]
     try:
-        print("[+] Starting the CVE-search docker, this may take some time...")
-        # Count 5~10min to start
-        cve_search = cve_search()
-        response = ""
-        while response != 200:
-            sleep(10)
-            try:
-                response = requests.get("http://127.0.0.1:5000").status_code
-            except:
-                pass
-        global filename
+        if no_launch:
+            cve_search = docker.from_env().containers.get('cvesearch')
+        else:
+            print("[+] Starting the CVE-search docker, this may take some time...")
+            # Count 5~10min to start
+            cve_search = cve_search()
+            response = ""
+            while response != 200:
+                sleep(10)
+                try:
+                    response = requests.get("http://127.0.0.1:5000").status_code
+                except:
+                    pass
+
         # Start the scanning
         for url in urls:
-            hostname = urlparse(url).hostname
+            hostname = urlparse(url.strip()).hostname
             filename = hostname
             print_and_report("[+] Scanning {0}".format(url))
             # Starting bruteforce of directory in background
@@ -199,6 +208,9 @@ if __name__ == "__main__":
                     print_and_report(line.decode(), end="")
                 print_and_report()
     finally:
-        remove_container(cve_search)
+        if no_launch:
+            pass
+        else:
+            remove_container(cve_search)
 
     
