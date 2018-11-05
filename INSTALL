@@ -12,4 +12,4 @@ docker pull pgrund/joomscan
 docker pull ttimasdf/cve-search:withdb -- takes a lot of time...
 
 3 - Initiate docker image
-docker run --name cvesearch ttimasdf/cve-search:withdb
+docker run -p 5000:5000 --name cvesearch ttimasdf/cve-search:withdb
