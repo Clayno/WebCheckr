@@ -55,7 +55,7 @@ def wappalyzer(url):
         response = ""
         for line in container.logs(stream=True):
             response += line.decode()
-        if response = None:
+        if response == None:
             return None
         response = json.loads(response)
         applications = response['applications']
@@ -115,9 +115,24 @@ def cve_search():
 def query_cve(name, version, container):
     print_and_report("[+] Searching cve for {0} ({1})".format(name, version))
     name = name.lower().replace(" ", ":")
-    command = "search.py -p '{0}:{1}'".format(name, version)
+    command = "search.py -p '{0}:{1}' -o json".format(name, version)
     exit_code, output = container.exec_run(command)
-    print_and_report(output.decode())
+    if output == None:
+        pass
+    else:
+        output = output.decode().split('\n')
+        response = [json.loads(i) for i in output if i is not None and i != '']
+        for vuln in response:
+            print_and_report('CVE   : {0}'.format(vuln['id']))
+            print_and_report('DATE  : {0}'.format(vuln['Published']))
+            print_and_report('CVSS  : {0}'.format(vuln['cvss']))
+            print_and_report('{0}'.format(vuln['summary']))
+            print_and_report('\n')
+            print_and_report('References:\n-----------\n')
+            for url in vuln['references']:
+                print_and_report(url)
+            print_and_report('\n')
+
     
 def remove_container(container):
     try: 
