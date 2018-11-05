@@ -55,6 +55,8 @@ def wappalyzer(url):
         response = ""
         for line in container.logs(stream=True):
             response += line.decode()
+        if response = None:
+            return None
         response = json.loads(response)
         applications = response['applications']
         found = {}
