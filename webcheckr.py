@@ -2,6 +2,7 @@
 # coding: utf-8
 
 import sys
+import os
 import docker
 import json
 import requests
@@ -28,7 +29,7 @@ scanners = {
         "Drupal": "Drupwn"
         }
 
-filename = ""
+directory = ""
 
 def print_banner():
     print(
@@ -45,7 +46,6 @@ def print_banner():
 
 def wappalyzer(url):
     print_and_report("[+] Checking the technologies running on the website")
-    # Wappalizer recursive with Chrome user-agent
     try: 
         # Should maybe be with the other comands ?
         command = "{0}".format(url)
@@ -96,11 +96,14 @@ def gobuster(url):
     print("[-] Bruteforcing directories/files in background")
     try:
         # Directory bruteforce with force wildcards without checking certificate
-        command = "-u {0} -w {1} -fw -k -q".format(url, "/data/wordlists/common.txt")
+        command = "-w {0} -u {1} -k -q".format("/wordlists/common.txt", url)
         client = docker.from_env()
-        container = client.containers.run(images["Gobuster"], command, detach=True)
-        return container
-    finally:
+        container = client.containers.run(images["Gobuster"], command, detach=True,
+                volumes={'/home/layno/wordlist/': {'bind': '/wordlists', 'mode': 'ro'}},
+                auto_remove=True)
+        generator = container.logs(stream=True)
+        return container, generator
+    except:
         remove_container(container)
 
 def cve_search():
@@ -113,25 +116,36 @@ def cve_search():
     return container
 
 def query_cve(name, version, container):
+    filename = 'cve_search_{0}_{1}.txt'.format(name, version)
     print_and_report("[+] Searching cve for {0} ({1})".format(name, version))
     name = name.lower().replace(" ", ":")
     command = "search.py -p '{0}:{1}' -o json".format(name, version)
     exit_code, output = container.exec_run(command)
+    vulns = {
+                'total': 0,
+                'critical': 0
+            }
     if output == None:
         pass
     else:
         output = output.decode().split('\n')
         response = [json.loads(i) for i in output if i is not None and i != '']
         for vuln in response:
-            print_and_report('CVE   : {0}'.format(vuln['id']))
-            print_and_report('DATE  : {0}'.format(vuln['Published']))
-            print_and_report('CVSS  : {0}'.format(vuln['cvss']))
-            print_and_report('{0}'.format(vuln['summary']))
-            print_and_report('\n')
-            print_and_report('References:\n-----------\n')
+            print_and_report('CVE   : {0}'.format(vuln['id']), filename)
+            print_and_report('DATE  : {0}'.format(vuln['Published']), filename)
+            print_and_report('CVSS  : {0}'.format(vuln['cvss']), filename)
+            print_and_report('{0}'.format(vuln['summary']), filename)
+            print_and_report('\n', filename)
+            print_and_report('References:\n-----------------------\n', filename)
             for url in vuln['references']:
-                print_and_report(url)
-            print_and_report('\n')
+                print_and_report(url, filename)
+            print_and_report('\n', filename)
+            vulns['total'] += 1
+            if float(vuln['cvss']) > 7.5:
+                vulns['critical'] += 1
+        if vulns['total'] != 0:
+            print_and_report('{0} vulnerabilities and {1} with a cvss > 7.5'
+                    .format(vulns['total'], vulns['critical']))
 
     
 def remove_container(container):
@@ -142,8 +156,13 @@ def remove_container(container):
     except:
         pass
 
-def print_and_report(string=''):
-    print(string)
+def print_and_report(string='', filename=''):
+    if filename == '':
+        print(string)
+        filename = 'report.txt'
+    if not os.path.exists(directory):
+            os.makedirs(directory)
+    filename = "{0}/{1}".format(directory, filename)
     if os.path.exists(filename):
         print(string, file=open(filename, 'a'))
     else:
@@ -194,11 +213,11 @@ if __name__ == "__main__":
         # Start the scanning
         for url in urls:
             hostname = urlparse(url.strip()).hostname
-            filename = hostname
+            directory = hostname
             print_and_report("[+] Scanning {0}".format(url))
             # Starting bruteforce of directory in background
             if directory_bf:
-                buster_container = gobuster(url)
+                buster_container, buster_generator = gobuster(url)
             # Start analysing web application
             found = wappalyzer(url)
             # Maybe not for all the tech, we don't care for css, jquery,...
@@ -221,13 +240,11 @@ if __name__ == "__main__":
             # Printing the directory bruteforce. Shouldn't block processing if multiple urls...
             if directory_bf:
                 print_and_report("[+] Getting back to bruteforcing results")
-                for line in buster_container.logs(stream=True):
-                    print_and_report(line.decode(), end="")
+                for line in buster_generator:
+                    print_and_report(line.decode())
                 print_and_report()
     finally:
-        if no_launch:
-            pass
-        else:
+        if not no_launch:
             remove_container(cve_search)
-
-    
+        if directory_bf:
+            remove_container(buster_container)
