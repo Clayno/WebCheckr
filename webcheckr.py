@@ -20,7 +20,9 @@ images = {
 commands = {
         "Wpscan": "--url {0} --no-banner",
         "Joomscan": "--url {0}",
-        "Drupwn": "enum {0}"
+        "Drupwn": "enum {0}",
+        "CVE-search": "{0}",
+        "Wappalyzer": "{0} --recursive=1",
         }
 
 scanners = {
@@ -48,10 +50,10 @@ def wappalyzer(url):
     print_and_report("[+] Checking the technologies running on the website")
     try: 
         # Should maybe be with the other comands ?
-        command = "{0}".format(url)
         client = docker.from_env()
-        container = client.containers.run(images["Wappalyzer"], command, detach=True,
-                auto_remove=True)
+        container = client.containers.run(images["Wappalyzer"], 
+                commands["Wappalyzer"].format(url),
+                detach=True, auto_remove=True)
         response = ""
         for line in container.logs(stream=True):
             response += line.decode()
@@ -169,6 +171,10 @@ def print_and_report(string='', filename=''):
         print(string, file=open(filename, 'w'))
 
 
+def nmap_retrieve(nmap_file):
+    from libnmap.parser import NmapParser
+    nmap = NmapParser.parse_fromfile(nmap_file)
+            
 
 if __name__ == "__main__":
     import argparse
@@ -178,6 +184,7 @@ if __name__ == "__main__":
     parser.add_argument('-p', '--proxy',  action='store', help="HTTP proxy to use - not implemented")
     parser.add_argument('-d', '--directory_bf', action='store_true', help='Launch directory bruteforce with common.txt from Seclist')
     parser.add_argument('-n', '--no_cve_launch', action='store_true', help='Do not launch cve-search docker, you have to start it manually: docker start cvesearch')
+    parser.add_argument('-c', '--cms_scan', action='store_true', help='Launch CMS scanner if detected. Supported: Wordpress, Joomla, Drupal')
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('-U', '--urls_file', action='store', help='Provide file instead of url, one per line')
     group.add_argument('-u', '--url', help="URL of target site")
@@ -188,6 +195,7 @@ if __name__ == "__main__":
     directory_bf = args.directory_bf
     urls_file = args.urls_file
     no_launch = args.no_cve_launch
+    cms_scan = args.cms_scan
     # L33t banner
     print_banner()
     # Check if there is a list of urls
@@ -195,6 +203,9 @@ if __name__ == "__main__":
         urls = open(urls_file).readlines()
     else:
         urls=[url]
+    for i in range(len(urls)):
+        if 'http://' not in urls[i] and 'https://' not in urls[i]:
+            urls[i] = 'http://{0}'.format(urls[i])
     try:
         if no_launch:
             cve_search = docker.from_env().containers.get('cvesearch')
@@ -202,13 +213,14 @@ if __name__ == "__main__":
             print("[+] Starting the CVE-search docker, this may take some time...")
             # Count 5~10min to start
             cve_search = cve_search()
-            response = ""
-            while response != 200:
-                sleep(10)
-                try:
-                    response = requests.get("http://127.0.0.1:5000").status_code
-                except:
-                    pass
+        print("[+] Checking if container is up...")
+        response = ""
+        while response != 200:
+            try:
+                response = requests.get("http://127.0.0.1:5000").status_code
+            except:
+                pass
+            sleep(10)
 
         # Start the scanning
         for url in urls:
@@ -235,8 +247,9 @@ if __name__ == "__main__":
             if cms is not None:   
                 print_and_report("[+] {0} found !".format(cms[0]))
                 print_and_report()
-                if cms[0] in scanners.keys():
-                    cms_scanner(url, scanners[cms[0]])
+                if cms_scan == True:
+                    if cms[0] in scanners.keys():
+                        cms_scanner(url, scanners[cms[0]])
             # Printing the directory bruteforce. Shouldn't block processing if multiple urls...
             if directory_bf:
                 print_and_report("[+] Getting back to bruteforcing results")
@@ -247,4 +260,5 @@ if __name__ == "__main__":
         if not no_launch:
             remove_container(cve_search)
         if directory_bf:
-            remove_container(buster_container)
+            if buster_container != None:
+                remove_container(buster_container)
