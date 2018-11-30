@@ -22,7 +22,8 @@ commands = {
         "Joomscan": "--url {0}",
         "Drupwn": "enum {0}",
         "CVE-search": "{0}",
-        "Wappalyzer": "{0} --recursive=1",
+        "Wappalyzer": "{0}",
+        "Wappalyzer_recursive": "{0} --recursive=1"
         }
 
 scanners = {
@@ -49,16 +50,24 @@ def print_banner():
 def wappalyzer(url):
     print_and_report("[+] Checking the technologies running on the website")
     try: 
-        # Should maybe be with the other comands ?
         client = docker.from_env()
         container = client.containers.run(images["Wappalyzer"], 
-                commands["Wappalyzer"].format(url),
+                commands["Wappalyzer_recursive"].format(url),
                 detach=True, auto_remove=True)
         response = ""
         for line in container.logs(stream=True):
             response += line.decode()
-        if response == None:
-            return None
+        # Sometimes, Wappalyzer doesn't work in recursive mode :'(
+        if response == None or response == "":
+            response = ""
+            container = client.containers.run(images["Wappalyzer"], 
+                commands["Wappalyzer"].format(url),
+                detach=True, auto_remove=True)
+            response = ""
+            for line in container.logs(stream=True):
+                response += line.decode()
+            if response == None or response == "":
+                return None
         response = json.loads(response)
         applications = response['applications']
         found = {}
@@ -100,6 +109,7 @@ def gobuster(url):
         # Directory bruteforce with force wildcards without checking certificate
         command = "-w {0} -u {1} -k -q".format("/wordlists/common.txt", url)
         client = docker.from_env()
+        # Change this. Have to be an argument
         container = client.containers.run(images["Gobuster"], command, detach=True,
                 volumes={'/home/layno/wordlist/': {'bind': '/wordlists', 'mode': 'ro'}},
                 auto_remove=True)
@@ -119,7 +129,7 @@ def cve_search():
 
 def query_cve(name, version, container):
     filename = 'cve_search_{0}_{1}.txt'.format(name, version)
-    print_and_report("[+] Searching cve for {0} ({1})".format(name, version))
+    print_and_report("[i] Searching cve for {0} ({1})".format(name, version))
     name = name.lower().replace(" ", ":")
     command = "search.py -p '{0}:{1}' -o json".format(name, version)
     exit_code, output = container.exec_run(command)
@@ -146,7 +156,7 @@ def query_cve(name, version, container):
             if float(vuln['cvss']) > 7.5:
                 vulns['critical'] += 1
         if vulns['total'] != 0:
-            print_and_report('{0} vulnerabilities and {1} with a cvss > 7.5'
+            print_and_report('|     {0} vulnerabilities and {1} with a cvss > 7.5'
                     .format(vulns['total'], vulns['critical']))
 
     
@@ -173,7 +183,16 @@ def print_and_report(string='', filename=''):
 
 def nmap_retrieve(nmap_file):
     from libnmap.parser import NmapParser
+    http_open = []
     nmap = NmapParser.parse_fromfile(nmap_file)
+    for host in nmap.hosts:
+        for port in host.get_open_ports():
+            if port[1] == 'tcp':
+                if host.get_service(port[0]).service == 'http':
+                    http_open.append("http://{0}:{1}".format(host.hostnames[0], port[0]))
+                elif host.get_service(port[0]).service == 'https':
+                    http_open.append("https://{0}:{1}".format(host.hostnames[0], port[0]))
+    return http_open
             
 
 if __name__ == "__main__":
@@ -185,7 +204,8 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--directory_bf', action='store_true', help='Launch directory bruteforce with common.txt from Seclist')
     parser.add_argument('-n', '--no_cve_launch', action='store_true', help='Do not launch cve-search docker, you have to start it manually: docker start cvesearch')
     parser.add_argument('-c', '--cms_scan', action='store_true', help='Launch CMS scanner if detected. Supported: Wordpress, Joomla, Drupal')
-    group = parser.add_mutually_exclusive_group(required=True)
+    parser.add_argument('-i', '--nmap_file', action='store', help='Provide XML nmap report instead of urls. This will launch the script to every http/https service found')
+    group = parser.add_mutually_exclusive_group()
     group.add_argument('-U', '--urls_file', action='store', help='Provide file instead of url, one per line')
     group.add_argument('-u', '--url', help="URL of target site")
     args = parser.parse_args()
@@ -196,13 +216,20 @@ if __name__ == "__main__":
     urls_file = args.urls_file
     no_launch = args.no_cve_launch
     cms_scan = args.cms_scan
+    nmap_file = args.nmap_file
     # L33t banner
     print_banner()
     # Check if there is a list of urls
+    urls = []
     if urls_file is not None:
         urls = open(urls_file).readlines()
-    else:
+    elif url is not None:
         urls=[url]
+    if nmap_file is not None:
+        urls.extend(nmap_retrieve(nmap_file))
+    if len(urls) == 0:
+        print("[x] No urls provided. Quitting...")
+        exit()
     for i in range(len(urls)):
         if 'http://' not in urls[i] and 'https://' not in urls[i]:
             urls[i] = 'http://{0}'.format(urls[i])
@@ -224,14 +251,18 @@ if __name__ == "__main__":
 
         # Start the scanning
         for url in urls:
+            # Getting hostname to create report file
             hostname = urlparse(url.strip()).hostname
             directory = hostname
-            print_and_report("[+] Scanning {0}".format(url))
-            # Starting bruteforce of directory in background
+            print_and_report("[+] Scanning {0}".format(url), )
             if directory_bf:
+                # Starting bruteforce of directory in background
                 buster_container, buster_generator = gobuster(url)
             # Start analysing web application
             found = wappalyzer(url)
+            if found == None:
+                print_and_report("[x] Couldn't get any technologies on this website")
+                continue
             # Maybe not for all the tech, we don't care for css, jquery,...
             # https://www.wappalyzer.com/docs/categories
             for category, l in found.items():
@@ -252,7 +283,7 @@ if __name__ == "__main__":
                         cms_scanner(url, scanners[cms[0]])
             # Printing the directory bruteforce. Shouldn't block processing if multiple urls...
             if directory_bf:
-                print_and_report("[+] Getting back to bruteforcing results")
+                print_and_report("[i] Getting back to bruteforcing results")
                 for line in buster_generator:
                     print_and_report(line.decode())
                 print_and_report()
