@@ -8,6 +8,7 @@ import json
 import requests
 from time import sleep
 
+# Docker images installed and used
 images = {
         "Wappalyzer": "wappalyzer/cli",
         "Wpscan": "wpscanteam/wpscan",
@@ -17,6 +18,7 @@ images = {
         "CVE-search": "ttimasdf/cve-search:withdb"
         }
 
+# Commands given to dockers
 commands = {
         "Wpscan": "--url {0} --no-banner",
         "Joomscan": "--url {0}",
@@ -26,12 +28,14 @@ commands = {
         "Wappalyzer_recursive": "{0} --recursive=1"
         }
 
+# CMS for which we have scanners
 scanners = {
         "WordPress": "Wpscan",
         "Joomla": "Joomscan",
         "Drupal": "Drupwn"
         }
 
+# Ouput directory (depends on current URL)
 directory = ""
 
 def print_banner():
@@ -48,6 +52,16 @@ def print_banner():
     )
 
 def wappalyzer(url):
+    """
+    Launch Wappalyzer docker for the specified URL.
+
+    Args:
+        url (str): URL to analyse
+
+    Returns:
+        None if Wappalyzer doesn't work
+        Dict of found CMS otherwise
+    """
     print_and_report("[+] Checking the technologies running on the website")
     try: 
         client = docker.from_env()
@@ -68,6 +82,7 @@ def wappalyzer(url):
                 response += line.decode()
             if response == None or response == "":
                 return None
+        # Now we have to parse the JSON response
         response = json.loads(response)
         applications = response['applications']
         found = {}
@@ -79,6 +94,7 @@ def wappalyzer(url):
             else:
                 found[key] = [data]
         for key, value in sorted(found.items()):
+            # Printing as they appear in cli Wappalyzer output
             print_and_report('{0}:'.format(key))
             for val in value:
                 name, version = val.split(':', 1)
@@ -93,6 +109,13 @@ def wappalyzer(url):
 
 
 def cms_scanner(url, scanner):
+    """
+    Launch the scanner for the found CMS on the url.
+
+    Args:
+        url (str): URL to scan
+        scanner (str): CMS scanner
+    """
     print_and_report("[+] Launching {0}".format(scanner))
     try:
         client = docker.from_env()
@@ -104,6 +127,16 @@ def cms_scanner(url, scanner):
         remove_container(container)
 
 def gobuster(url):
+    """
+    Launch Gobuster docker.
+
+    Args:
+        url (str): URL to bruteforce
+
+    Returns:
+        container: launched gobuster container
+        generator: streamed output of the docker
+    """
     print("[-] Bruteforcing directories/files in background")
     try:
         # Directory bruteforce with force wildcards without checking certificate
@@ -119,6 +152,9 @@ def gobuster(url):
         remove_container(container)
 
 def cve_search():
+    """
+    Starts the CVE-search docker.
+    """
     command = "" 
     client = docker.from_env()
     container = client.containers.get('cvesearch')
@@ -128,6 +164,14 @@ def cve_search():
     return container
 
 def query_cve(name, version, container):
+    """
+    Runs a search in the CVE-search container.
+
+    Args:
+        name (str): Name of the technology to analyse
+        version (str): Version of the technology to analyse
+        container: CVE-search container
+    """
     filename = 'cve_search_{0}_{1}.txt'.format(name, version)
     print_and_report("[i] Searching cve for {0} ({1})".format(name, version))
     name = name.lower().replace(" ", ":")
@@ -161,6 +205,9 @@ def query_cve(name, version, container):
 
     
 def remove_container(container):
+    """
+    Safely removes containers.
+    """
     try: 
         statuses = ['removed', 'exited', 'dead']
         if container.status not in statuses:
@@ -169,6 +216,17 @@ def remove_container(container):
         pass
 
 def print_and_report(string='', filename=''):
+    """
+    Print to output and to file.
+
+    Note:
+        If filename is empty, writing to report.txt in the current 
+        directory (URL of the target).
+
+    Args:
+        string (str): String to print
+        filename (str): File to write to
+    """
     if filename == '':
         print(string)
         filename = 'report.txt'
@@ -182,6 +240,15 @@ def print_and_report(string='', filename=''):
 
 
 def nmap_retrieve(nmap_file):
+    """
+    Parse and retrieve http/https services of a host.
+
+    Args:
+        nmap_file (str): Path of the nmap file 
+
+    Returns:
+        List of http/https services urls found
+    """
     from libnmap.parser import NmapParser
     http_open = []
     nmap = NmapParser.parse_fromfile(nmap_file)
@@ -293,3 +360,4 @@ if __name__ == "__main__":
         if directory_bf:
             if buster_container != None:
                 remove_container(buster_container)
+
