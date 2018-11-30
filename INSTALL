@@ -3,6 +3,7 @@ Refer to docker documentation for the installation.
 
 For python:
 python3 -m pip install docker
+python3 -m pip install python-libnmap
 
 2 - Pull required images:
 docker pull wpscanteam/wpscan
