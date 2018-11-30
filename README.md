@@ -7,3 +7,6 @@ Initial check for web pentests</br>
 - Database storage</br>
 - Update cve-search docker automatically</br>
 - Create HTML output</br>
+
+<h3>Functionality to add</h3>
+- Default password checking</br>
