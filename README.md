@@ -7,6 +7,7 @@ Initial check for web pentests</br>
 - Database storage</br>
 - Update cve-search docker automatically</br>
 - Create HTML output</br>
+- Better handling of running containers as a list and not unitary work to parallelize</br> 
 
 <h3>Functionality to add</h3>
 - Default password checking</br>
