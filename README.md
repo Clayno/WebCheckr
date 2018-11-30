@@ -10,4 +10,4 @@ Initial check for web pentests</br>
 - Better handling of running containers as a list and not unitary work to parallelize</br> 
 
 <h3>Functionality to add</h3>
-- Default password checking</br>
+- Default password checking (https://nmap.org/nsedoc/scripts/http-default-accounts.html)</br>
