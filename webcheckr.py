@@ -15,7 +15,8 @@ images = {
         "Gobuster": "kodisha/gobuster",
         "Joomscan": "pgrund/joomscan",
         "Drupwn": "immunit/drupwn",
-        "CVE-search": "ttimasdf/cve-search:withdb"
+        "CVE-search": "ttimasdf/cve-search:withdb",
+        "Nmap": "uzyexe/nmap"
         }
 
 # Commands given to dockers
@@ -25,7 +26,8 @@ commands = {
         "Drupwn": "enum {0}",
         "CVE-search": "{0}",
         "Wappalyzer": "{0}",
-        "Wappalyzer_recursive": "{0} --recursive=1"
+        "Wappalyzer_recursive": "{0} --recursive=1",
+        "Nmap": "-p{0} --script http-default-accounts {1}"
         }
 
 # CMS for which we have scanners
@@ -60,9 +62,9 @@ def wappalyzer(url):
 
     Returns:
         None if Wappalyzer doesn't work
-        Dict of found CMS otherwise
+        Dict of found technologies otherwise
     """
-    print_and_report("[+] Checking the technologies running on the website")
+    print_and_report("[i] Checking the technologies running on the website")
     try: 
         client = docker.from_env()
         container = client.containers.run(images["Wappalyzer"], 
@@ -85,6 +87,7 @@ def wappalyzer(url):
         # Now we have to parse the JSON response
         response = json.loads(response)
         applications = response['applications']
+        # Converting json into dict => found
         found = {}
         for cell in applications:
             key = ''.join(v for v in cell['categories'][0].values())
@@ -93,16 +96,6 @@ def wappalyzer(url):
                 found[key].append(data)
             else:
                 found[key] = [data]
-        for key, value in sorted(found.items()):
-            # Printing as they appear in cli Wappalyzer output
-            print_and_report('{0}:'.format(key))
-            for val in value:
-                name, version = val.split(':', 1)
-                if version == "":
-                    print_and_report('    {0}'.format(name))
-                else:
-                    print_and_report('    {0} ({1})'.format(name, version))
-            print_and_report()
         return found
     finally:
         remove_container(container)
@@ -173,7 +166,6 @@ def query_cve(name, version, container):
         container: CVE-search container
     """
     filename = 'cve_search_{0}_{1}.txt'.format(name, version)
-    print_and_report("[i] Searching cve for {0} ({1})".format(name, version))
     name = name.lower().replace(" ", ":")
     command = "search.py -p '{0}:{1}' -o json".format(name, version)
     exit_code, output = container.exec_run(command)
@@ -200,8 +192,9 @@ def query_cve(name, version, container):
             if float(vuln['cvss']) > 7.5:
                 vulns['critical'] += 1
         if vulns['total'] != 0:
-            print_and_report('|     {0} vulnerabilities and {1} with a cvss > 7.5'
-                    .format(vulns['total'], vulns['critical']))
+            return '{0} vulnerabilities and {1} with a cvss > 7.5'.format(vulns['total'], 
+                    vulns['critical'])
+        return None
 
     
 def remove_container(container):
@@ -262,6 +255,19 @@ def nmap_retrieve(nmap_file):
     return http_open
             
 
+def check_if_done(urls):
+    """
+    Check if the list of urls have already been scanned.
+
+    Args:
+        urls (list): List of the urls to scan
+    """
+    for url in urls:
+        if os.path.exists(urlparse(url.strip()).hostname):
+            print("[-] Removing {0} (already scanned)".format(url))
+            urls.remove(url)
+    return urls
+
 if __name__ == "__main__":
     import argparse
     import os
@@ -271,7 +277,7 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--directory_bf', action='store_true', help='Launch directory bruteforce with common.txt from Seclist')
     parser.add_argument('-n', '--no_cve_launch', action='store_true', help='Do not launch cve-search docker, you have to start it manually: docker start cvesearch')
     parser.add_argument('-c', '--cms_scan', action='store_true', help='Launch CMS scanner if detected. Supported: Wordpress, Joomla, Drupal')
-    parser.add_argument('-i', '--nmap_file', action='store', help='Provide XML nmap report instead of urls. This will launch the script to every http/https service found')
+    parser.add_argument('-i', '--nmap_file', action='store', help='Provide XML nmap report with or instead of urls. This will launch the script to every http/https service found')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('-U', '--urls_file', action='store', help='Provide file instead of url, one per line')
     group.add_argument('-u', '--url', help="URL of target site")
@@ -294,20 +300,21 @@ if __name__ == "__main__":
         urls=[url]
     if nmap_file is not None:
         urls.extend(nmap_retrieve(nmap_file))
-    if len(urls) == 0:
-        print("[x] No urls provided. Quitting...")
-        exit()
     for i in range(len(urls)):
         if 'http://' not in urls[i] and 'https://' not in urls[i]:
             urls[i] = 'http://{0}'.format(urls[i])
+    urls = check_if_done(urls)
+    if len(urls) == 0:
+        print("[x] No urls provided. Quitting...")
+        exit()
     try:
         if no_launch:
             cve_search = docker.from_env().containers.get('cvesearch')
         else:
-            print("[+] Starting the CVE-search docker, this may take some time...")
+            print("[i] Starting the CVE-search docker, this may take some time...")
             # Count 5~10min to start
             cve_search = cve_search()
-        print("[+] Checking if container is up...")
+        print("[i] Checking if container is up...")
         response = ""
         while response != 200:
             try:
@@ -321,7 +328,7 @@ if __name__ == "__main__":
             # Getting hostname to create report file
             hostname = urlparse(url.strip()).hostname
             directory = hostname
-            print_and_report("[+] Scanning {0}".format(url), )
+            print_and_report("\033[94m[+] Scanning {0}\033[0m".format(url))
             if directory_bf:
                 # Starting bruteforce of directory in background
                 buster_container, buster_generator = gobuster(url)
@@ -334,16 +341,24 @@ if __name__ == "__main__":
             # https://www.wappalyzer.com/docs/categories
             for category, l in found.items():
                 for tech in l:
+                    print_and_report('|----{0}:'.format(category))
                     name, version = tech.split(':', 1)
-                    if version != "":
-                        query_cve(name, version, cve_search)
+                    if version == "":
+                        print_and_report('|    {0}'.format(name))
+                    else:
+                        vuln = query_cve(name, version, cve_search)
+                        if vuln != None:
+                            print_and_report('|    {0} ({1}) \033[0;31m{2}\033[0m'.format(
+                                name, version, vuln))
+                        else:
+                            print_and_report('|        {0} ({1})'.format(name, version))
             if "CMS" in found.keys():
                 cms = [cms.split(':', 1)[0] for cms in found["CMS"]]
             else:
                 cms = None
             # Check if a known CMS is detected
             if cms is not None:   
-                print_and_report("[+] {0} found !".format(cms[0]))
+                print_and_report("\033[0;32m[+] {0} found !\033[0m".format(cms[0]))
                 print_and_report()
                 if cms_scan == True:
                     if cms[0] in scanners.keys():
