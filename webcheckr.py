@@ -6,6 +6,10 @@ import os
 import docker
 import json
 import requests
+import threading
+import argparse
+import os
+from urllib.parse import urlparse
 from time import sleep
 
 # Docker images installed and used
@@ -39,6 +43,12 @@ scanners = {
 
 # Ouput directory (depends on current URL)
 directory = ""
+
+# List of dockers id
+docker_ids = []
+
+# List of threads
+threads = []
 
 def print_banner():
     print(
@@ -114,8 +124,9 @@ def cms_scanner(url, scanner):
         client = docker.from_env()
         container = client.containers.run(images[scanner], commands[scanner].format(url), 
                 detach=True, auto_remove=True)
+        docker_ids.append(container)
         for line in container.logs(stream=True):
-            print_and_report(line.decode())
+            print_and_report(line.decode(), "{0}.txt".format(scanner), url=url)
     finally:
         remove_container(container)
 
@@ -208,7 +219,7 @@ def remove_container(container):
     except:
         pass
 
-def print_and_report(string='', filename=''):
+def print_and_report(string='', filename='', url=''):
     """
     Print to output and to file.
 
@@ -223,9 +234,12 @@ def print_and_report(string='', filename=''):
     if filename == '':
         print(string)
         filename = 'report.txt'
-    if not os.path.exists(directory):
-            os.makedirs(directory)
-    filename = "{0}/{1}".format(directory, filename)
+    if url == '':
+        if not os.path.exists(directory):
+                os.makedirs(directory)
+        filename = "{0}/{1}".format(directory, filename)
+    else:
+        filename = "{0}/{1}".format(urlparse(url.strip()).hostname, filename)
     if os.path.exists(filename):
         print(string, file=open(filename, 'a'))
     else:
@@ -269,9 +283,6 @@ def check_if_done(urls):
     return urls
 
 if __name__ == "__main__":
-    import argparse
-    import os
-    from urllib.parse import urlparse
     parser  = argparse.ArgumentParser(description="WebCheckr - Initial check for web pentests")
     parser.add_argument('-p', '--proxy',  action='store', help="HTTP proxy to use - not implemented")
     parser.add_argument('-d', '--directory_bf', action='store_true', help='Launch directory bruteforce with common.txt from Seclist')
@@ -334,21 +345,21 @@ if __name__ == "__main__":
                 buster_container, buster_generator = gobuster(url)
             # Start analysing web application
             found = wappalyzer(url)
-            if found == None:
+            if found == None or not found :
                 print_and_report("[x] Couldn't get any technologies on this website")
                 continue
             # Maybe not for all the tech, we don't care for css, jquery,...
             # https://www.wappalyzer.com/docs/categories
             for category, l in found.items():
+                print_and_report('|----{0}:'.format(category))
                 for tech in l:
-                    print_and_report('|----{0}:'.format(category))
                     name, version = tech.split(':', 1)
                     if version == "":
-                        print_and_report('|    {0}'.format(name))
+                        print_and_report('|        {0}'.format(name))
                     else:
                         vuln = query_cve(name, version, cve_search)
                         if vuln != None:
-                            print_and_report('|    {0} ({1}) \033[0;31m{2}\033[0m'.format(
+                            print_and_report('|        {0} ({1}) \033[0;31m{2}\033[0m'.format(
                                 name, version, vuln))
                         else:
                             print_and_report('|        {0} ({1})'.format(name, version))
@@ -362,17 +373,28 @@ if __name__ == "__main__":
                 print_and_report()
                 if cms_scan == True:
                     if cms[0] in scanners.keys():
-                        cms_scanner(url, scanners[cms[0]])
+                        thread = threading.Thread(target=cms_scanner,
+                            args=(url, scanners[cms[0]], ),)
+                        threads.append(thread)
+                        thread.start()
             # Printing the directory bruteforce. Shouldn't block processing if multiple urls...
             if directory_bf:
                 print_and_report("[i] Getting back to bruteforcing results")
                 for line in buster_generator:
                     print_and_report(line.decode())
                 print_and_report()
+        
+
+        print_and_report("[i] Waiting for threads to finish")
+        for thread in threads:
+            if thread.isAlive():
+                thread.join()
     finally:
         if not no_launch:
             remove_container(cve_search)
         if directory_bf:
             if buster_container != None:
                 remove_container(buster_container)
+        for docker in docker_ids:
+            remove_container(docker)
 
