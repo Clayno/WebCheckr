@@ -31,6 +31,7 @@ commands = {
         "CVE-search": "{0}",
         "Wappalyzer": "{0}",
         "Wappalyzer_recursive": "{0} --recursive=1",
+        "Gobuster": "-w {0} -u {1} -k -q",
         "Nmap": "-p{0} --script http-default-accounts {1}"
         }
 
@@ -84,18 +85,20 @@ def wappalyzer(url):
         for line in container.logs(stream=True):
             response += line.decode()
         # Sometimes, Wappalyzer doesn't work in recursive mode :'(
-        if response == None or response == "":
-            response = ""
+        try:
+            response = json.loads(response)
+        except:
             container = client.containers.run(images["Wappalyzer"], 
                 commands["Wappalyzer"].format(url),
                 detach=True, auto_remove=True)
             response = ""
             for line in container.logs(stream=True):
                 response += line.decode()
-            if response == None or response == "":
-                return None
         # Now we have to parse the JSON response
-        response = json.loads(response)
+        try:
+            response = json.loads(response)
+        except:
+            return None
         applications = response['applications']
         # Converting json into dict => found
         found = {}
@@ -126,7 +129,7 @@ def cms_scanner(url, scanner):
                 detach=True, auto_remove=True)
         docker_ids.append(container)
         for line in container.logs(stream=True):
-            print_and_report(line.decode(), "{0}.txt".format(scanner), url=url)
+            print_and_report(line.decode().strip(), "{0}.txt".format(scanner), url=url)
     finally:
         remove_container(container)
 
@@ -141,17 +144,18 @@ def gobuster(url):
         container: launched gobuster container
         generator: streamed output of the docker
     """
-    print("[-] Bruteforcing directories/files in background")
+    print("[i] Bruteforcing directories/files in background")
     try:
         # Directory bruteforce with force wildcards without checking certificate
-        command = "-w {0} -u {1} -k -q".format("/wordlists/common.txt", url)
+        command = commands["Gobuster"].format("/wordlists/common.txt", url)
         client = docker.from_env()
-        # Change this. Have to be an argument
+        # Change this. Has to be an argument
         container = client.containers.run(images["Gobuster"], command, detach=True,
                 volumes={'/home/layno/wordlist/': {'bind': '/wordlists', 'mode': 'ro'}},
                 auto_remove=True)
-        generator = container.logs(stream=True)
-        return container, generator
+        docker_ids.append(container)
+        for line in container.logs(stream=True):
+            print_and_report(line.decode().strip(), "gobuster.txt", url=url)
     except:
         remove_container(container)
 
@@ -342,7 +346,9 @@ if __name__ == "__main__":
             print_and_report("\033[94m[+] Scanning {0}\033[0m".format(url))
             if directory_bf:
                 # Starting bruteforce of directory in background
-                buster_container, buster_generator = gobuster(url)
+                thread = threading.Thread(target=gobuster, args=(url, ),)
+                threads.append(thread)
+                thread.start()
             # Start analysing web application
             found = wappalyzer(url)
             if found == None or not found :
@@ -377,14 +383,7 @@ if __name__ == "__main__":
                             args=(url, scanners[cms[0]], ),)
                         threads.append(thread)
                         thread.start()
-            # Printing the directory bruteforce. Shouldn't block processing if multiple urls...
-            if directory_bf:
-                print_and_report("[i] Getting back to bruteforcing results")
-                for line in buster_generator:
-                    print_and_report(line.decode())
-                print_and_report()
-        
-
+        # Waiting for threads to complete
         print_and_report("[i] Waiting for threads to finish")
         for thread in threads:
             if thread.isAlive():
@@ -392,9 +391,6 @@ if __name__ == "__main__":
     finally:
         if not no_launch:
             remove_container(cve_search)
-        if directory_bf:
-            if buster_container != None:
-                remove_container(buster_container)
         for docker in docker_ids:
             remove_container(docker)
 
