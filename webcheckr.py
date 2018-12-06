@@ -139,10 +139,6 @@ def gobuster(url):
 
     Args:
         url (str): URL to bruteforce
-
-    Returns:
-        container: launched gobuster container
-        generator: streamed output of the docker
     """
     print("[i] Bruteforcing directories/files in background")
     try:
@@ -234,6 +230,7 @@ def print_and_report(string='', filename='', url=''):
     Args:
         string (str): String to print
         filename (str): File to write to
+        url (str): Url scanned to determine directory
     """
     if filename == '':
         print(string)
@@ -288,7 +285,6 @@ def check_if_done(urls):
 
 if __name__ == "__main__":
     parser  = argparse.ArgumentParser(description="WebCheckr - Initial check for web pentests")
-    parser.add_argument('-p', '--proxy',  action='store', help="HTTP proxy to use - not implemented")
     parser.add_argument('-d', '--directory_bf', action='store_true', help='Launch directory bruteforce with common.txt from Seclist')
     parser.add_argument('-n', '--no_cve_launch', action='store_true', help='Do not launch cve-search docker, you have to start it manually: docker start cvesearch')
     parser.add_argument('-c', '--cms_scan', action='store_true', help='Launch CMS scanner if detected. Supported: Wordpress, Joomla, Drupal')
@@ -299,7 +295,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     # Arguments
     url =  args.url
-    proxy = args.proxy
     directory_bf = args.directory_bf
     urls_file = args.urls_file
     no_launch = args.no_cve_launch
