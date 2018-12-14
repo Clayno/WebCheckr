@@ -11,3 +11,4 @@ Initial check for web pentests</br>
 
 <h3>Functionality to add</h3>
 - Default password checking (https://nmap.org/nsedoc/scripts/http-default-accounts.html)</br>
+(https://github.com/NorthernSec/CVE-Scan)
