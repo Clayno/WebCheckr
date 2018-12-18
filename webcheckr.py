@@ -75,7 +75,7 @@ def wappalyzer(url):
         None if Wappalyzer doesn't work
         Dict of found technologies otherwise
     """
-    print_and_report("[i] Checking the technologies running on the website")
+    print("[i] Checking the technologies running on the website")
     try: 
         client = docker.from_env()
         container = client.containers.run(images["Wappalyzer"], 
@@ -344,7 +344,7 @@ if __name__ == "__main__":
             # Getting hostname to create report file
             hostname = urlparse(url.strip()).hostname
             directory = hostname
-            print_and_report("\033[94m[+] Scanning {0}\033[0m".format(url))
+            print("\033[94m[+] Scanning {0}\033[0m".format(url))
             if directory_bf:
                 # Starting bruteforce of directory in background
                 thread = threading.Thread(target=gobuster, args=(url, ),)
@@ -353,7 +353,7 @@ if __name__ == "__main__":
             # Start analysing web application
             found = wappalyzer(url)
             if found == None or not found :
-                print_and_report("[x] Couldn't get any technologies on this website")
+                print("[x] Couldn't get any technologies on this website")
                 continue
             # Maybe not for all the tech, we don't care for css, jquery,...
             # https://www.wappalyzer.com/docs/categories
