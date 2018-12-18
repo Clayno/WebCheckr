@@ -264,9 +264,15 @@ def nmap_retrieve(nmap_file):
         for port in host.get_open_ports():
             if port[1] == 'tcp':
                 if host.get_service(port[0]).service == 'http':
-                    http_open.append("http://{0}:{1}".format(host.hostnames[0], port[0]))
+                    if host.hostnames:
+                        http_open.append("http://{0}:{1}".format(host.hostnames[0], port[0]))
+                    else:
+                        http_open.append("http://{0}:{1}".format(host.address, port[0]))
                 elif host.get_service(port[0]).service == 'https':
-                    http_open.append("https://{0}:{1}".format(host.hostnames[0], port[0]))
+                    if host.hostnames:
+                        http_open.append("https://{0}:{1}".format(host.hostnames[0], port[0]))
+                    else:
+                        http_open.append("https://{0}:{1}".format(host.address, port[0]))
     return http_open
             
 
