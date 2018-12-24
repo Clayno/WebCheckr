@@ -9,8 +9,11 @@ import requests
 import threading
 import argparse
 import os
+import base64
 from urllib.parse import urlparse
 from time import sleep
+from selenium import webdriver
+from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 
 # Docker images installed and used
 images = {
@@ -20,6 +23,7 @@ images = {
         "Joomscan": "pgrund/joomscan",
         "Drupwn": "immunit/drupwn",
         "CVE-search": "ttimasdf/cve-search:withdb",
+        "Selenium": "selenium/standalone-chrome",
         "Nmap": "uzyexe/nmap"
         }
 
@@ -32,6 +36,7 @@ commands = {
         "Wappalyzer": "{0}",
         "Wappalyzer_recursive": "{0} --recursive=1",
         "Gobuster": "-w {0} -u {1} -k -q",
+        "Selenium": "",
         "Nmap": "-p{0} --script http-default-accounts {1}"
         }
 
@@ -75,7 +80,6 @@ def wappalyzer(url):
         None if Wappalyzer doesn't work
         Dict of found technologies otherwise
     """
-    print("[i] Checking the technologies running on the website")
     try: 
         client = docker.from_env()
         container = client.containers.run(images["Wappalyzer"], 
@@ -289,6 +293,23 @@ def check_if_done(urls):
             urls.remove(url)
     return urls
 
+def selenium_start():
+    try: 
+        client = docker.from_env()
+        container = client.containers.run(images["Selenium"], 
+                commands["Selenium"].format(url),
+                ports={4444: ('127.0.0.1', 5007)},
+                detach=True, auto_remove=True)
+        docker_ids.append(container)
+        sleep(5)
+        driver = webdriver.Remote("http://127.0.0.1:5007/wd/hub", 
+                DesiredCapabilities.CHROME)
+        driver.implicitly_wait(30)
+        return driver
+    except:
+        remove_container(container)
+        return None
+
 if __name__ == "__main__":
     parser  = argparse.ArgumentParser(description="WebCheckr - Initial check for web pentests")
     parser.add_argument('-d', '--directory_bf', action='store_true', help='Launch directory bruteforce with common.txt from Seclist')
@@ -337,20 +358,31 @@ if __name__ == "__main__":
                 response = requests.get("http://127.0.0.1:5000").status_code
             except:
                 pass
-            sleep(10)
-
+            sleep(2)
+        driver = selenium_start()
         # Start the scanning
         for url in urls:
             # Getting hostname to create report file
             hostname = urlparse(url.strip()).hostname
-            directory = hostname
+            directory = "{0}/{1}".format(os.getcwd(), hostname)
             print("\033[94m[+] Scanning {0}\033[0m".format(url))
+            # Get basis informations with selenium
+            try:
+                driver.get(url)
+                print("\033[0;32m[i] Title: {0}\033[0m".format(driver.title))
+                if not os.path.exists(directory):
+                    os.makedirs(directory)
+                screen = driver.get_screenshot_as_png()
+                open("{0}/{1}.png".format(directory, base64.b64encode(url.encode()).decode()), "wb").write(screen)
+            except:
+                print("[!] Couldn't take screenshot")
             if directory_bf:
                 # Starting bruteforce of directory in background
                 thread = threading.Thread(target=gobuster, args=(url, ),)
                 threads.append(thread)
                 thread.start()
             # Start analysing web application
+            print("[i] Checking the technologies running on the website")
             found = wappalyzer(url)
             if found == None or not found :
                 print("[x] Couldn't get any technologies on this website")
@@ -385,7 +417,7 @@ if __name__ == "__main__":
                         threads.append(thread)
                         thread.start()
         # Waiting for threads to complete
-        print_and_report("[i] Waiting for threads to finish")
+        print("[i] Waiting for threads to finish")
         for thread in threads:
             if thread.isAlive():
                 thread.join()
