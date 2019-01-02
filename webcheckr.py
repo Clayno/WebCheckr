@@ -35,7 +35,7 @@ commands = {
         "CVE-search": "{0}",
         "Wappalyzer": "{0}",
         "Wappalyzer_recursive": "{0} --recursive=1",
-        "Gobuster": "-w {0} -u {1} -k -q",
+        "Gobuster": "-fw -w {0} -u {1} -k -q",
         "Selenium": "",
         "Nmap": "-p{0} --script http-default-accounts {1}"
         }
@@ -137,7 +137,7 @@ def cms_scanner(url, scanner):
     finally:
         remove_container(container)
 
-def gobuster(url):
+def gobuster(url, wordlist):
     """
     Launch Gobuster docker.
 
@@ -145,13 +145,13 @@ def gobuster(url):
         url (str): URL to bruteforce
     """
     print("[i] Bruteforcing directories/files in background")
+    path, filename = os.path.split(wordlist)
     try:
         # Directory bruteforce with force wildcards without checking certificate
-        command = commands["Gobuster"].format("/wordlists/common.txt", url)
+        command = commands["Gobuster"].format("/wordlists/".format(filename), url)
         client = docker.from_env()
-        # Change this. Has to be an argument
         container = client.containers.run(images["Gobuster"], command, detach=True,
-                volumes={'/home/layno/wordlist/': {'bind': '/wordlists', 'mode': 'ro'}},
+                volumes={path: {'bind': '/wordlists', 'mode': 'ro'}},
                 auto_remove=True)
         docker_ids.append(container)
         for line in container.logs(stream=True):
@@ -159,16 +159,35 @@ def gobuster(url):
     except:
         remove_container(container)
 
-def cve_search():
+def cve_search_start(no_launch):
     """
     Starts the CVE-search docker.
+
+    Args:
+        no_launch (boolean): true start a docker, false get the one running
+
+    Returns:
+        Container of cvesearch docker
     """
-    command = "" 
-    client = docker.from_env()
-    container = client.containers.get('cvesearch')
-    container.start()
-    #container = client.containers.run(images["CVE-search"], command,
-    #        ports={5000: ('127.0.0.1', 5000)} ,detach=True)
+    if no_launch:
+            container = docker.from_env().containers.get('cvesearch')
+    else:
+        print("[i] Starting the CVE-search docker, this may take some time...")
+        # Count 5~10min to start
+        command = "" 
+        client = docker.from_env()
+        container = client.containers.get('cvesearch')
+        container.start()
+        #container = client.containers.run(images["CVE-search"], command,
+        #        ports={5000: ('127.0.0.1', 5000)} ,detach=True)
+    print("[i] Checking if container is up...")
+    response = ""
+    while response != 200:
+        try:
+            response = requests.get("http://127.0.0.1:5000").status_code
+        except:
+            pass
+        sleep(2)
     return container
 
 def query_cve(name, version, container):
@@ -280,17 +299,33 @@ def nmap_retrieve(nmap_file):
     return http_open
             
 
-def check_if_done(urls):
+def url_sanitize(urls_file, url, nmap_file):
     """
+    Organize all the urls input.
     Check if the list of urls have already been scanned.
 
     Args:
-        urls (list): List of the urls to scan
+        urls_file (str): Paht to file containing the urls to scan
+        url (str): Single url to scan
+        nmap_file (str): Path to nmap scan to retrieve urls to scan from
     """
+    urls = []
+    if urls_file is not None:
+        urls = open(urls_file).readlines()
+    elif url is not None:
+        urls=[url]
+    if nmap_file is not None:
+        urls.extend(nmap_retrieve(nmap_file))
+    for i in range(len(urls)):
+        if 'http://' not in urls[i] and 'https://' not in urls[i]:
+            urls[i] = 'http://{0}'.format(urls[i])
     for url in urls:
         if os.path.exists(urlparse(url.strip()).hostname):
             print("[-] Removing {0} (already scanned)".format(url))
             urls.remove(url)
+    if len(urls) == 0:
+        print("[x] No urls provided. Quitting...")
+        exit()
     return urls
 
 def selenium_start():
@@ -310,9 +345,69 @@ def selenium_start():
         remove_container(container)
         return None
 
+def selenium_get(url):
+    '''
+    Get a screenshot and the title of the landing page.
+
+    Args:
+        url (str): Url to fetch
+    '''
+    try:
+        driver.get(url)
+        print("\033[0;32m[i] Title: {0}\033[0m".format(driver.title))
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+            screen = driver.get_screenshot_as_png()
+            open("{0}/{1}.png".format(directory, 
+                base64.b64encode(url.encode()).decode()), "wb").write(screen)
+    except:
+        print("[!] Couldn't take screenshot")
+
+
+def analyze_found(found, cms_scan):
+    '''
+    Print and launch a cve-search for all the valid element in found.
+    An element is valid if a version is determined alongside the technology.
+    Also start the corresponding CMS scanner if one has been detected and the
+    option is activated.
+
+    Args:
+        found (list): list of technologies found
+        cms_scan (boolean): true start scan, false don't
+    '''
+    # Maybe not for all the tech, we don't care for css, jquery,...
+    # https://www.wappalyzer.com/docs/categories
+    for category, l in found.items():
+        print_and_report('|----{0}:'.format(category))
+        for tech in l:
+            name, version = tech.split(':', 1)
+            if version == "":
+                print_and_report('|        {0}'.format(name))
+            else:
+                vuln = query_cve(name, version, cve_search)
+                if vuln != None:
+                    print_and_report('|        {0} ({1}) \033[0;31m{2}\033[0m'.format(
+                        name, version, vuln))
+                else:
+                    print_and_report('|        {0} ({1})'.format(name, version))
+    if "CMS" in found.keys():
+        cms = [cms.split(':', 1)[0] for cms in found["CMS"]]
+    else:
+        cms = None
+    # Check if a known CMS is detected
+    if cms is not None:   
+        print_and_report("\033[0;32m[+] {0} found !\033[0m".format(cms[0]))
+        print_and_report()
+        if cms_scan == True:
+            if cms[0] in scanners.keys():
+                thread = threading.Thread(target=cms_scanner, 
+                        args=(url, scanners[cms[0]], ),)
+                threads.append(thread)
+                thread.start()
+
 if __name__ == "__main__":
     parser  = argparse.ArgumentParser(description="WebCheckr - Initial check for web pentests")
-    parser.add_argument('-d', '--directory_bf', action='store_true', help='Launch directory bruteforce with common.txt from Seclist')
+    parser.add_argument('-d', '--directory_bf', action='store', help='Launch directory bruteforce with provided wordlist (full path)')
     parser.add_argument('-n', '--no_cve_launch', action='store_true', help='Do not launch cve-search docker, you have to start it manually: docker start cvesearch')
     parser.add_argument('-c', '--cms_scan', action='store_true', help='Launch CMS scanner if detected. Supported: Wordpress, Joomla, Drupal')
     parser.add_argument('-i', '--nmap_file', action='store', help='Provide XML nmap report with or instead of urls. This will launch the script to every http/https service found')
@@ -329,36 +424,13 @@ if __name__ == "__main__":
     nmap_file = args.nmap_file
     # L33t banner
     print_banner()
-    # Check if there is a list of urls
-    urls = []
-    if urls_file is not None:
-        urls = open(urls_file).readlines()
-    elif url is not None:
-        urls=[url]
-    if nmap_file is not None:
-        urls.extend(nmap_retrieve(nmap_file))
-    for i in range(len(urls)):
-        if 'http://' not in urls[i] and 'https://' not in urls[i]:
-            urls[i] = 'http://{0}'.format(urls[i])
-    urls = check_if_done(urls)
-    if len(urls) == 0:
-        print("[x] No urls provided. Quitting...")
-        exit()
+    # Sanitize the list of urls
+    urls = url_sanitize(urls_file, url, nmap_file)
+    # Handling the dockers with care, if something crashes, we need to stop all of them
     try:
-        if no_launch:
-            cve_search = docker.from_env().containers.get('cvesearch')
-        else:
-            print("[i] Starting the CVE-search docker, this may take some time...")
-            # Count 5~10min to start
-            cve_search = cve_search()
-        print("[i] Checking if container is up...")
-        response = ""
-        while response != 200:
-            try:
-                response = requests.get("http://127.0.0.1:5000").status_code
-            except:
-                pass
-            sleep(2)
+        # Start cve-search docker
+        cve_search = cve_search_start(no_launch)
+        # Start Selenium docker
         driver = selenium_start()
         # Start the scanning
         for url in urls:
@@ -366,19 +438,11 @@ if __name__ == "__main__":
             hostname = urlparse(url.strip()).hostname
             directory = "{0}/{1}".format(os.getcwd(), hostname)
             print("\033[94m[+] Scanning {0}\033[0m".format(url))
-            # Get basis informations with selenium
-            try:
-                driver.get(url)
-                print("\033[0;32m[i] Title: {0}\033[0m".format(driver.title))
-                if not os.path.exists(directory):
-                    os.makedirs(directory)
-                screen = driver.get_screenshot_as_png()
-                open("{0}/{1}.png".format(directory, base64.b64encode(url.encode()).decode()), "wb").write(screen)
-            except:
-                print("[!] Couldn't take screenshot")
-            if directory_bf:
+            # Get basic informations with selenium
+            selenium_get(url)
+            if directory_bf is not None:
                 # Starting bruteforce of directory in background
-                thread = threading.Thread(target=gobuster, args=(url, ),)
+                thread = threading.Thread(target=gobuster, args=(url, directory_bf, ),)
                 threads.append(thread)
                 thread.start()
             # Start analysing web application
@@ -387,35 +451,8 @@ if __name__ == "__main__":
             if found == None or not found :
                 print("[x] Couldn't get any technologies on this website")
                 continue
-            # Maybe not for all the tech, we don't care for css, jquery,...
-            # https://www.wappalyzer.com/docs/categories
-            for category, l in found.items():
-                print_and_report('|----{0}:'.format(category))
-                for tech in l:
-                    name, version = tech.split(':', 1)
-                    if version == "":
-                        print_and_report('|        {0}'.format(name))
-                    else:
-                        vuln = query_cve(name, version, cve_search)
-                        if vuln != None:
-                            print_and_report('|        {0} ({1}) \033[0;31m{2}\033[0m'.format(
-                                name, version, vuln))
-                        else:
-                            print_and_report('|        {0} ({1})'.format(name, version))
-            if "CMS" in found.keys():
-                cms = [cms.split(':', 1)[0] for cms in found["CMS"]]
-            else:
-                cms = None
-            # Check if a known CMS is detected
-            if cms is not None:   
-                print_and_report("\033[0;32m[+] {0} found !\033[0m".format(cms[0]))
-                print_and_report()
-                if cms_scan == True:
-                    if cms[0] in scanners.keys():
-                        thread = threading.Thread(target=cms_scanner,
-                            args=(url, scanners[cms[0]], ),)
-                        threads.append(thread)
-                        thread.start()
+            # Analyze the foundings by Wappalyzer and start CMS scan if asked
+            analyze_found(found)
         # Waiting for threads to complete
         print("[i] Waiting for threads to finish")
         for thread in threads:
@@ -426,4 +463,3 @@ if __name__ == "__main__":
             remove_container(cve_search)
         for docker in docker_ids:
             remove_container(docker)
-
