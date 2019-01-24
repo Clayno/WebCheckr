@@ -24,7 +24,7 @@ images = {
         "Drupwn": "immunit/drupwn",
         "CVE-search": "ttimasdf/cve-search:withdb",
         "Selenium": "selenium/standalone-chrome",
-        "Nmap": "uzyexe/nmap"
+        "Changeme": "ztgrace/changeme"
         }
 
 # Commands given to dockers
@@ -37,7 +37,7 @@ commands = {
         "Wappalyzer_recursive": "{0} --recursive=1",
         "Gobuster": "-fw -w {0} -u {1} -k -q",
         "Selenium": "",
-        "Nmap": "-p{0} --script http-default-accounts {1}"
+        "Changeme": "{0}"
         }
 
 # CMS for which we have scanners
@@ -55,6 +55,64 @@ docker_ids = []
 
 # List of threads
 threads = []
+
+# Template of report
+report = '''<!DOCTYPE html>
+<html>
+<head>
+<style>
+body{{
+    font-family: "Arial";
+}}
+
+h2{{
+    color: black;
+}}
+
+.content{{
+    position: static;
+    overflow: hidden;
+    border: 1px solid rgb(204, 204, 204);
+    border-radius: 5px;
+    padding: 0.01em 16px;
+}}
+
+.screenshot{{
+    position: static;
+    float: right;
+    max-width:30%;
+    max-height:30%;
+}}
+
+</style>
+<title>WebCheckr Report</title>
+</head>
+<body>
+
+{0}
+
+</body>
+<script>
+function togglediv(id) {{
+    var div = document.getElementById(id);
+    div.style.display = div.style.display == "none" ? "block" : "none";
+    }}
+</script>
+</html>'''
+
+# List of class check
+checks = []
+
+# Class containing data for a check
+class Check:
+    def __init__(self, hostname, directory, screen_path, 
+            wappalyzer, cve):
+        self.hostname = hostname
+        self.directory = directory
+        self.screen_path = screen_path
+        self.wappalyzer = wappalyzer
+        self.cve = cve
+
 
 def print_banner():
     print(
@@ -351,6 +409,9 @@ def selenium_get(url):
 
     Args:
         url (str): Url to fetch
+
+    Returns:
+        path of the screenshot
     '''
     try:
         driver.get(url)
@@ -358,10 +419,12 @@ def selenium_get(url):
         if not os.path.exists(directory):
             os.makedirs(directory)
             screen = driver.get_screenshot_as_png()
-            open("{0}/{1}.png".format(directory, 
-                base64.b64encode(url.encode()).decode()), "wb").write(screen)
-    except:
-        print("[!] Couldn't take screenshot")
+            screen_path = "{0}/{1}.png".format(directory, 
+                    base64.b64encode(url.encode()).decode())
+            open(screen_path, "wb").write(screen)
+        return screen_path
+    except Exception as e:
+        print("[!] Couldn't take screenshot {0}".format(str(e)))
 
 
 def analyze_found(found, cms_scan):
@@ -377,6 +440,7 @@ def analyze_found(found, cms_scan):
     '''
     # Maybe not for all the tech, we don't care for css, jquery,...
     # https://www.wappalyzer.com/docs/categories
+    for_return = []
     for category, l in found.items():
         print_and_report('|----{0}:'.format(category))
         for tech in l:
@@ -388,6 +452,7 @@ def analyze_found(found, cms_scan):
                 if vuln != None:
                     print_and_report('|        {0} ({1}) \033[0;31m{2}\033[0m'.format(
                         name, version, vuln))
+                    for_return.append((name,version,vuln))
                 else:
                     print_and_report('|        {0} ({1})'.format(name, version))
     if "CMS" in found.keys():
@@ -404,6 +469,37 @@ def analyze_found(found, cms_scan):
                         args=(url, scanners[cms[0]], ),)
                 threads.append(thread)
                 thread.start()
+    return for_return
+
+def write_html(checks):
+    final = ""
+    i = 0
+    for check in checks:
+        final += '''<div class="check">
+    <div class="check-title">
+        <h2>{0}</h2>
+        <button onclick="togglediv('content{5}')">toggle</button>
+    </div>
+    <div class="content" id="content{5}">
+        <p>
+        <b>Directory:</b> {1}</br>
+        </p>
+        <img class="screenshot" src="{2}">
+        <p class="techologies">
+        <b>Technologies found:</b></br>
+            {3}</br>
+        </p>
+        <p class="cve">
+        <b>CVE found:</b></br>
+            {4}</br>
+        </p>
+    </div>
+</div>
+</br>'''.format(check.hostname, check.directory, check.screen_path,
+                check.wappalyzer, check.cve, str(i))
+        i+=1
+    return final
+        
 
 if __name__ == "__main__":
     parser  = argparse.ArgumentParser(description="WebCheckr - Initial check for web pentests")
@@ -439,7 +535,7 @@ if __name__ == "__main__":
             directory = "{0}/{1}".format(os.getcwd(), hostname)
             print("\033[94m[+] Scanning {0}\033[0m".format(url))
             # Get basic informations with selenium
-            selenium_get(url)
+            screen_path = selenium_get(url)
             if directory_bf is not None:
                 # Starting bruteforce of directory in background
                 thread = threading.Thread(target=gobuster, args=(url, directory_bf, ),)
@@ -450,14 +546,22 @@ if __name__ == "__main__":
             found = wappalyzer(url)
             if found == None or not found :
                 print("[x] Couldn't get any technologies on this website")
+                check = Check(hostname, directory, screen_path, found, None)
+                checks.append(check)
                 continue
             # Analyze the foundings by Wappalyzer and start CMS scan if asked
-            analyze_found(found)
+            vulns = analyze_found(found, cms_scan)
+            check = Check(hostname, directory, screen_path, found, vulns)
+            checks.append(check)
         # Waiting for threads to complete
         print("[i] Waiting for threads to finish")
         for thread in threads:
             if thread.isAlive():
                 thread.join()
+        # Write html report
+        to_write = write_html(checks)
+        open("report.html", "w").write(report.format(to_write))
+        print("[+] Html report written to report.html")
     finally:
         if not no_launch:
             remove_container(cve_search)
