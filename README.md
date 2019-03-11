@@ -24,7 +24,7 @@ docker run -p 5000:5000 --name cvesearch ttimasdf/cve-search:withdb</br>
 - Handling of vhosts (or multiple technologies on one website such as multiple CMS). Currently, the scan doesn't launch</br>
 - Database storage</br>
 - Update cve-search docker automatically</br>
-- Create HTML output</br>
+- Set timeout for check
 - Maybe, create a generic function/class to launch a docker</br>
 </br>
 <h3>Functionality to add</h3>
