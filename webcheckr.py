@@ -6,6 +6,8 @@ import os
 import docker
 import json
 import requests
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import threading
 import argparse
 import os
@@ -29,7 +31,7 @@ images = {
 
 # Commands given to dockers
 commands = {
-        "Wpscan": "--url {0} --no-banner",
+        "Wpscan": "--url {0} --no-banner -f cli-no-colour",
         "Joomscan": "--url {0}",
         "Drupwn": "enum {0}",
         "CVE-search": "{0}",
@@ -59,6 +61,7 @@ threads = []
 # Template of report
 report = '''<!DOCTYPE html>
 <html>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
 <head>
 <style>
 body{{
@@ -106,10 +109,11 @@ checks = []
 # Class containing data for a check
 class Check:
     def __init__(self, hostname, directory, screen_path, 
-            wappalyzer, cve):
+            title, wappalyzer, cve):
         self.hostname = hostname
         self.directory = directory
         self.screen_path = screen_path
+        self.title = title
         self.wappalyzer = wappalyzer
         self.cve = cve
 
@@ -156,11 +160,12 @@ def wappalyzer(url):
             response = ""
             for line in container.logs(stream=True):
                 response += line.decode()
-        # Now we have to parse the JSON response
-        try:
-            response = json.loads(response)
-        except:
-            return None
+            # Now we have to parse the JSON response
+            try:
+                response = json.loads(response)
+            except:
+                # If we can't parse it, means nothing was found !
+                return None
         applications = response['applications']
         # Converting json into dict => found
         found = {}
@@ -374,17 +379,36 @@ def url_sanitize(urls_file, url, nmap_file):
         urls=[url]
     if nmap_file is not None:
         urls.extend(nmap_retrieve(nmap_file))
+    urls = [url.strip() for url in urls]
     for i in range(len(urls)):
         if 'http://' not in urls[i] and 'https://' not in urls[i]:
             urls[i] = 'http://{0}'.format(urls[i])
-    for url in urls:
-        if os.path.exists(urlparse(url.strip()).hostname):
-            print("[-] Removing {0} (already scanned)".format(url))
-            urls.remove(url)
-    if len(urls) == 0:
+    result = []
+    for i in range(0, len(urls)-1):
+        if os.path.exists(urlparse(urls[i]).hostname):
+            print("[-] Removing {0} (already scanned)".format(urls[i]))
+        urls_tmp = []
+        if "https" in urls[i]:
+            urls_tmp.append(urls[i])
+        else:
+            urls_tmp.append(urls[i].replace("http", "https"))
+        urls_tmp.append(urls[i].replace("https", "http"))
+        reached = False
+        for url_tmp in urls_tmp:
+            try:
+                code = requests.head(url_tmp, timeout=10, verify=False).status_code
+                result.append(url_tmp)
+                reached = True
+                break
+            except Exception as e:
+                pass
+        if not reached:
+            print("[x] Impossible to reach {0}. Removing it...".format(urlparse(urls[i]).hostname))
+
+    if len(result) == 0:
         print("[x] No urls provided. Quitting...")
         exit()
-    return urls
+    return result
 
 def selenium_start():
     try: 
@@ -392,6 +416,7 @@ def selenium_start():
         container = client.containers.run(images["Selenium"], 
                 commands["Selenium"].format(url),
                 ports={4444: ('127.0.0.1', 5007)},
+                shm_size="2G", # https://github.com/elgalu/docker-selenium/issues/20
                 detach=True, auto_remove=True)
         docker_ids.append(container)
         sleep(5)
@@ -418,11 +443,11 @@ def selenium_get(url):
         print("\033[0;32m[i] Title: {0}\033[0m".format(driver.title))
         if not os.path.exists(directory):
             os.makedirs(directory)
-            screen = driver.get_screenshot_as_png()
-            screen_path = "{0}/{1}.png".format(directory, 
-                    base64.b64encode(url.encode()).decode())
-            open(screen_path, "wb").write(screen)
-        return screen_path
+        screen = driver.get_screenshot_as_png()
+        screen_path = "{0}/{1}.png".format(directory, 
+                base64.b64encode(url.encode()).decode())
+        open(screen_path, "wb").write(screen)
+        return screen_path, driver.title
     except Exception as e:
         print("[!] Couldn't take screenshot {0}".format(str(e)))
 
@@ -477,29 +502,49 @@ def write_html(checks):
     for check in checks:
         final += '''<div class="check">
     <div class="check-title">
-        <h2>{0}</h2>
-        <button onclick="togglediv('content{5}')">toggle</button>
+        <h2>{url} ({title})</h2>
+        <button onclick="togglediv('content{id}')">toggle</button>
     </div>
-    <div class="content" id="content{5}">
+    <div class="content" id="content{id}">
+        <img class="screenshot" src="{screen_path}">
         <p>
-        <b>Directory:</b> {1}</br>
+        <b>Directory:</b> {directory}</br>
         </p>
-        <img class="screenshot" src="{2}">
         <p class="techologies">
         <b>Technologies found:</b></br>
-            {3}</br>
+            {wappalyzer}</br>
         </p>
         <p class="cve">
         <b>CVE found:</b></br>
-            {4}</br>
+            {cve}</br>
         </p>
     </div>
 </div>
-</br>'''.format(check.hostname, check.directory, check.screen_path,
-                check.wappalyzer, check.cve, str(i))
+</br>
+'''.format(url=check.hostname, directory=check.directory, screen_path=check.screen_path,
+                wappalyzer=found_to_html(check.wappalyzer), cve=check.cve, 
+                id=str(i), title=check.title)
         i+=1
     return final
         
+def found_to_html(found):
+    if found == None:
+        return "Nothing found"
+    final = ""
+    for category, l in found.items():
+        final += '|----{0}:</br>'.format(category)
+        for tech in l:
+            name, version = tech.split(':', 1)
+            if version == "":
+                final += '|        {0}</br>'.format(name)
+            else:
+                final += '|        {0} ({1})</br>'.format(name, version)
+    return final
+
+def check_availability(url):
+    urls = []
+    return None
+
 
 if __name__ == "__main__":
     parser  = argparse.ArgumentParser(description="WebCheckr - Initial check for web pentests")
@@ -522,6 +567,9 @@ if __name__ == "__main__":
     print_banner()
     # Sanitize the list of urls
     urls = url_sanitize(urls_file, url, nmap_file)
+    for url in urls:
+
+        print(url)
     # Handling the dockers with care, if something crashes, we need to stop all of them
     try:
         # Start cve-search docker
@@ -529,13 +577,14 @@ if __name__ == "__main__":
         # Start Selenium docker
         driver = selenium_start()
         # Start the scanning
+        index = 1
         for url in urls:
             # Getting hostname to create report file
-            hostname = urlparse(url.strip()).hostname
+            hostname = urlparse(url).hostname
             directory = "{0}/{1}".format(os.getcwd(), hostname)
-            print("\033[94m[+] Scanning {0}\033[0m".format(url))
+            print("\n\033[94m[+] Scanning {0} ({1}/{2})\033[0m".format(url, index, len(urls))) 
             # Get basic informations with selenium
-            screen_path = selenium_get(url)
+            screen_path, title = selenium_get(url)
             if directory_bf is not None:
                 # Starting bruteforce of directory in background
                 thread = threading.Thread(target=gobuster, args=(url, directory_bf, ),)
@@ -546,13 +595,15 @@ if __name__ == "__main__":
             found = wappalyzer(url)
             if found == None or not found :
                 print("[x] Couldn't get any technologies on this website")
-                check = Check(hostname, directory, screen_path, found, None)
+                check = Check(url, directory, screen_path, title, found, None)
                 checks.append(check)
+                index += 1
                 continue
             # Analyze the foundings by Wappalyzer and start CMS scan if asked
             vulns = analyze_found(found, cms_scan)
-            check = Check(hostname, directory, screen_path, found, vulns)
+            check = Check(url, directory, screen_path, title, found, vulns)
             checks.append(check)
+            index += 1
         # Waiting for threads to complete
         print("[i] Waiting for threads to finish")
         for thread in threads:
