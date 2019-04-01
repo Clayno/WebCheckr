@@ -541,11 +541,6 @@ def found_to_html(found):
                 final += '|        {0} ({1})</br>'.format(name, version)
     return final
 
-def check_availability(url):
-    urls = []
-    return None
-
-
 if __name__ == "__main__":
     parser  = argparse.ArgumentParser(description="WebCheckr - Initial check for web pentests")
     parser.add_argument('-d', '--directory_bf', action='store', help='Launch directory bruteforce with provided wordlist (full path)')
@@ -568,7 +563,6 @@ if __name__ == "__main__":
     # Sanitize the list of urls
     urls = url_sanitize(urls_file, url, nmap_file)
     for url in urls:
-
         print(url)
     # Handling the dockers with care, if something crashes, we need to stop all of them
     try:
@@ -584,7 +578,11 @@ if __name__ == "__main__":
             directory = "{0}/{1}".format(os.getcwd(), hostname)
             print("\n\033[94m[+] Scanning {0} ({1}/{2})\033[0m".format(url, index, len(urls))) 
             # Get basic informations with selenium
-            screen_path, title = selenium_get(url)
+            try:
+                screen_path, title = selenium_get(url)
+            except:
+                screen_path = None
+                title = None
             if directory_bf is not None:
                 # Starting bruteforce of directory in background
                 thread = threading.Thread(target=gobuster, args=(url, directory_bf, ),)
