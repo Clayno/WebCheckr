@@ -20,6 +20,7 @@ docker pull ttimasdf/cve-search:withdb -- takes a lot of time...</br>
 docker run -p 5000:5000 --name cvesearch ttimasdf/cve-search:withdb</br>
 </br>
 <h3>TODO</h3>
+- Fix inconstistences in wappalyzer (puppeter ?) 
 - Change user agent for all the requests
 - Fix dirb
 - Add header (cookies, server version) checks
