@@ -20,6 +20,10 @@ docker pull ttimasdf/cve-search:withdb -- takes a lot of time...</br>
 docker run -p 5000:5000 --name cvesearch ttimasdf/cve-search:withdb</br>
 </br>
 <h3>TODO</h3>
+- Change user agent for all the requests
+- Fix dirb
+- Add header (cookies, server version) checks
+- Add SSL checks
 - Add Magescan or Magento</br>
 - Handling of vhosts (or multiple technologies on one website such as multiple CMS). Currently, the scan doesn't launch</br>
 - Database storage</br>
