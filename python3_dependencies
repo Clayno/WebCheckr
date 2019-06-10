@@ -2,4 +2,3 @@ requests
 docker
 python-libnmap
 argparse
-libnmap
