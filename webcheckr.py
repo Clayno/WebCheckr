@@ -385,12 +385,12 @@ def nmap_retrieve(nmap_file):
     for host in nmap.hosts:
         for port in host.get_open_ports():
             if port[1] == 'tcp':
-                if host.get_service(port[0]).service == 'http':
+                if 'http' in host.get_service(port[0]).service and 'https' not in host.get_service(port[0]).service:
                     if host.hostnames:
                         http_open.append("http://{0}:{1}".format(host.hostnames[0], port[0]))
                     else:
                         http_open.append("http://{0}:{1}".format(host.address, port[0]))
-                elif host.get_service(port[0]).service == 'https':
+                elif 'https' in host.get_service(port[0]).service:
                     if host.hostnames:
                         http_open.append("https://{0}:{1}".format(host.hostnames[0], port[0]))
                     else:
@@ -402,8 +402,8 @@ async def validate_url(session, url):
     '''
     Returns url if connectivity went right. With priority on https scheme.
     '''
-    responses = await asyncio.gather(session.get(url[0], verify_ssl=False), 
-            session.get(url[1], verify_ssl=False), return_exceptions=True)
+    responses = await asyncio.gather(session.get(url[0], verify_ssl=False, timeout=10), 
+            session.get(url[1], verify_ssl=False, timeout=10), return_exceptions=True)
     if hasattr(responses[1], 'status') and responses[1].status != None:
         return url[1]
     elif hasattr(responses[0], 'status') and responses[0].status != None:
@@ -465,8 +465,8 @@ async def url_sanitize(urls_file, url, nmap_file):
 def selenium_start(port):
     try:
         environment = {
-                'SCREEN_WIDTH': '1366',
-                'SCREEN_HEIGHT': '768'
+                'SCREEN_WIDTH': '1920',
+                'SCREEN_HEIGHT': '1024'
                 }
         client = docker.from_env()
         container = client.containers.run(images["Selenium"], 
@@ -482,7 +482,7 @@ def selenium_start(port):
         driver.implicitly_wait(30)
         return driver, container
     except Exception as e:
-        print(e)
+        print("slenium_start", e)
         if container:
             remove_container(container)
         return None
@@ -561,30 +561,33 @@ def write_html(checks):
     final = ""
     i = 0
     for check in checks:
-        final += '''<div class="check">
-    <div class="check-title">
-        <h2>{url} ({title})</h2>
-        <button onclick="togglediv('content{id}')">toggle</button>
+        if check is None:
+            final += ''
+        else:
+            final += '''<div class="check">
+        <div class="check-title">
+            <h2>{url} ({title})</h2>
+            <button onclick="togglediv('content{id}')">toggle</button>
+        </div>
+        <div class="content" id="content{id}">
+            <img class="screenshot" src="{screen_path}">
+            <p>
+            <b>Directory:</b> {directory}</br>
+            </p>
+            <p class="techologies">
+            <b>Technologies found:</b></br>
+                {wappalyzer}</br>
+            </p>
+            <p class="cve">
+            <b>CVE found:</b></br>
+                {cve}</br>
+            </p>
+        </div>
     </div>
-    <div class="content" id="content{id}">
-        <img class="screenshot" src="{screen_path}">
-        <p>
-        <b>Directory:</b> {directory}</br>
-        </p>
-        <p class="techologies">
-        <b>Technologies found:</b></br>
-            {wappalyzer}</br>
-        </p>
-        <p class="cve">
-        <b>CVE found:</b></br>
-            {cve}</br>
-        </p>
-    </div>
-</div>
-</br>
-'''.format(url=check.hostname, directory=check.directory, screen_path=check.screen_path,
-                wappalyzer=found_to_html(check.wappalyzer), cve=check.cve, 
-                id=str(i), title=check.title)
+    </br>
+    '''.format(url=check.hostname, directory=check.directory, screen_path=check.screen_path,
+                    wappalyzer=found_to_html(check.wappalyzer), cve=check.cve, 
+                    id=str(i), title=check.title)
         i+=1
     return final
         
@@ -611,11 +614,14 @@ def check_website(url, cms_scan=False, port=5001):
     if not os.path.exists(directory):
         os.makedirs(directory)
     try:
-        driver, container = selenium_start(port)
-        # Start the scanning
-        # Get basic informations with selenium
-        screen_path, title = selenium_get(url, directory, driver)
-        driver.close()
+        try:
+            driver, container = selenium_start(port)
+            # Start the scanning
+            # Get basic informations with selenium
+            screen_path, title = selenium_get(url, directory, driver)
+            #driver.close()
+        except:
+            pass
         if directory_bf is not None:
             # Starting bruteforce of directory in background
             thread = threading.Thread(target=gobuster, args=(url, directory_bf, ),)
@@ -623,7 +629,7 @@ def check_website(url, cms_scan=False, port=5001):
             thread.start()
         # Start analysing web application
         found = wappalyzer(url)
-        docker_wrapper(images["Dirhunt"], commands["Dirhunt"].format(url), directory)
+        #docker_wrapper(images["Dirhunt"], commands["Dirhunt"].format(url), directory)
         if found == None or not found :
             print("[x] Couldn't get any technologies on {url}".format(url=url))
             check = Check(url, directory, screen_path, title, found, None)
@@ -633,7 +639,7 @@ def check_website(url, cms_scan=False, port=5001):
             check = Check(url, directory, screen_path, title, found, vulns)
         return check
     except Exception as e:
-        print(e)
+        print("check_website", e)
         remove_container(container)
         return None
     finally:
@@ -646,10 +652,10 @@ if __name__ == "__main__":
     parser.add_argument('-n', '--no_cve_launch', action='store_true', help='Do not launch cve-search docker, you have to start it manually: docker start cvesearch')
     parser.add_argument('-c', '--cms_scan', action='store_true', help='Launch CMS scanner if detected. Supported: Wordpress, Joomla, Drupal')
     parser.add_argument('-t', '--concurrent_targets', action='store', help='Number of concurrent targets to scan')
-    parser.add_argument('-i', '--nmap_file', action='store', help='Provide XML nmap report with or instead of urls. This will launch the script to every http/https service found')
-    group = parser.add_mutually_exclusive_group()
+    group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('-U', '--urls_file', action='store', help='Provide file instead of url, one per line')
     group.add_argument('-u', '--url', help="URL of target site")
+    group.add_argument('-i', '--nmap_file', action='store', help='Provide XML nmap report with or instead of urls. This will launch the script to every http/https service found')
     args = parser.parse_args()
     # Arguments
     url =  args.url
@@ -667,7 +673,6 @@ if __name__ == "__main__":
     urls = loop.run_until_complete(url_sanitize(urls_file, url, nmap_file))
     for url in urls:
         print(url)
-    loop.close()
     # Handling the dockers with care, if something crashes, we need to stop all of them
     try:
         # Start cve-search docker
@@ -687,13 +692,14 @@ if __name__ == "__main__":
                     future.cancel()
                 executor.shutdown(wait=False)
         # Waiting for threads to complete
-        print("[i] Waiting for threads to finish")
-        for thread in threads:
-            if thread.isAlive():
-                thread.join()
+        #print("[i] Waiting for threads to finish")
+        #for thread in threads:
+        #    if thread.isAlive():
+        #        thread.join()
         # Output the results
         for check in checks:
-            print(check.to_string())
+            if check:
+                print(check.to_string())
         # Write html report
         to_write = write_html(checks)
         open("report.html", "w").write(report.format(to_write))
