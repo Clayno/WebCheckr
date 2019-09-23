@@ -464,17 +464,12 @@ async def url_sanitize(urls_file, url, nmap_file):
 
 def selenium_start(port):
     try:
-        environment = {
-                'SCREEN_WIDTH': '1920',
-                'SCREEN_HEIGHT': '1024'
-                }
         client = docker.from_env()
         container = client.containers.run(images["Selenium"], 
                 commands["Selenium"].format(url),
                 ports={4444: ('127.0.0.1', port)},
-                shm_size="2G", # https://github.com/elgalu/docker-selenium/issues/20
-                detach=True, auto_remove=True,
-                environment=environment)
+                shm_size="1G", # https://github.com/elgalu/docker-selenium/issues/20
+                detach=True, auto_remove=True)
         docker_ids.append(container)
         sleep(8)
         driver = webdriver.Remote("http://127.0.0.1:{0}/wd/hub".format(port), 
@@ -640,10 +635,12 @@ def check_website(url, cms_scan=False, port=5001):
         return check
     except Exception as e:
         print("check_website", e)
-        remove_container(container)
+        if container:
+            remove_container(container)
         return None
     finally:
-        remove_container(container)
+        if container:
+            remove_container(container)
 
 
 if __name__ == "__main__":
