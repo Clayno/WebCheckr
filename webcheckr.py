@@ -19,7 +19,8 @@ from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 import asyncio
 import aiohttp
 from concurrent.futures import ProcessPoolExecutor, as_completed, FIRST_COMPLETED
-
+import traceback
+import multiprocessing
 
 # Docker images installed and used
 images = {
@@ -132,7 +133,7 @@ class Check:
                 if version == "":
                     final += '|        {0}\n'.format(name)
                 else:
-                    if name in self.cve:
+                    if self.cve and name in self.cve:
                         final += '|        {0} ({1}) {2}\n'.format(name, version, self.cve[name][1])
                     else:
                          final += '|        {0} ({1})\n'.format(name, version)
@@ -311,6 +312,7 @@ def query_cve(name, version, container, directory):
     if output == None:
         pass
     else:
+
         output = output.decode().split('\n')
         response = [json.loads(i) for i in output if i is not None and i != '']
         for vuln in response:
@@ -446,7 +448,7 @@ async def url_sanitize(urls_file, url, nmap_file):
                     'https://{0}'.format(hostname)))
                 to_test.append(validate_url(session, ('http://{0}'.format(hostname),
                     'https://{0}'.format(hostname))))  
-            if os.path.exists(urlparse(tmp_urls[-1][0]).hostname):
+            if os.path.exists(urlparse(tmp_urls[-1][0]).netloc):
                 print("[-] Removing {0} (already scanned)".format(url))
                 to_test.pop()
                 break
@@ -454,7 +456,7 @@ async def url_sanitize(urls_file, url, nmap_file):
     final = []
     for i in range(len(to_test)):
         if not results[i]:
-            print("[x] Impossible to reach {0}. Removing it...".format(urlparse(tmp_urls[i][0]).hostname))
+            print("[x] Impossible to reach {0}. Removing it...".format(urlparse(tmp_urls[i][0]).netloc))
         else:
             final.append(results[i])
     if len(final) == 0:
@@ -477,7 +479,7 @@ def selenium_start(port):
         driver.implicitly_wait(30)
         return driver, container
     except Exception as e:
-        print("slenium_start", e)
+        traceback.print_exc()
         if container:
             remove_container(container)
         return None
@@ -501,10 +503,8 @@ def selenium_get(url, directory, driver):
         open(screen_path, "wb").write(screen)
         return screen_path, driver.title
     except Exception as e:
-        print("[!] Couldn't take screenshot {0}".format(str(e)))
-        driver.close()
-    finally:
-        driver.close()
+        print("[!] Couldn't take screenshot")
+        traceback.print_exc()
 
 
 def analyze_found(url, found, cms_scan, directory):
@@ -528,7 +528,8 @@ def analyze_found(url, found, cms_scan, directory):
             if version == "":
                 print_and_report('|        {0}'.format(name), directory=directory, no_print=True)
             else:
-                vuln = query_cve(name, version, cve_search, directory)
+                #vuln = query_cve(name, version, cve_search, directory)
+                vuln = None
                 if vuln != None:
                     print_and_report('|{3}        {0} ({1}) \033[0;31m{2}\033[0m'.format(
                         name, version, vuln, url), directory=directory)
@@ -601,27 +602,36 @@ def found_to_html(found):
     return final
 
 
-def check_website(url, cms_scan=False, port=5001):     
-    print("\n\033[94m[+] Scanning {0}\033[0m".format(url))
-    # Getting hostname to create report file    
-    hostname = urlparse(url).hostname
-    directory = "{0}/{1}".format(os.getcwd(), hostname)
-    if not os.path.exists(directory):
-        os.makedirs(directory)
+def check_website(url, port, cms_scan):
     try:
-        try:
-            driver, container = selenium_start(port)
-            # Start the scanning
-            # Get basic informations with selenium
-            screen_path, title = selenium_get(url, directory, driver)
-            #driver.close()
-        except:
-            pass
-        if directory_bf is not None:
+        print("\n\033[94m[+] Scanning {0}\033[0m".format(url))
+        # Getting hostname to create report file    
+        parsed_url = urlparse(url)
+        directory = "{0}/{1}".format(base_dir, parsed_url.netloc)
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+        loop = asyncio.get_event_loop()
+        screen_path = None
+        title = None
+        container = None
+        with port.lock:
+            try:
+                driver, container = selenium_start(port.port)
+                # Start the scanning
+                # Get basic informations with selenium
+                screen_path, title = selenium_get(url, directory, driver)
+                driver.close()
+            except Exception as e:
+                if container:
+                    remove_container(container)
+            finally:
+                if container:
+                    remove_container(container)
+        #if directory_bf is not None:
             # Starting bruteforce of directory in background
-            thread = threading.Thread(target=gobuster, args=(url, directory_bf, ),)
-            threads.append(thread)
-            thread.start()
+        #    thread = threading.Thread(target=gobuster, args=(url, directory_bf, ),)
+        #    threads.append(thread)
+        #    thread.start()
         # Start analysing web application
         found = wappalyzer(url)
         #docker_wrapper(images["Dirhunt"], commands["Dirhunt"].format(url), directory)
@@ -631,16 +641,16 @@ def check_website(url, cms_scan=False, port=5001):
         else:
             # Analyze the foundings by Wappalyzer and start CMS scan if asked
             vulns = analyze_found(url, found, cms_scan, directory)
-            check = Check(url, directory, screen_path, title, found, vulns)
+            check = Check(url, directory, screen_path, title, found, None)
+        print('[i] Workflow is over for {url}'.format(url=url))
         return check
-    except Exception as e:
-        print("check_website", e)
-        if container:
-            remove_container(container)
-        return None
-    finally:
-        if container:
-            remove_container(container)
+    except:
+        traceback.print_exc()
+
+class SeleniumPort:
+    def __init__(self, port, lock):
+        self.port = port
+        self.lock = lock
 
 
 if __name__ == "__main__":
@@ -662,7 +672,8 @@ if __name__ == "__main__":
     cms_scan = args.cms_scan
     nmap_file = args.nmap_file
     concurrent_targets = int(args.concurrent_targets)
-    semaphore = asyncio.Semaphore(concurrent_targets)
+    selenium_starting_port = 5001
+    base_dir = '/home/layno/programs/WebCheckr/webcheckr'
     # L33t banner
     print_banner()
     # Sanitize the list of urls
@@ -670,17 +681,27 @@ if __name__ == "__main__":
     urls = loop.run_until_complete(url_sanitize(urls_file, url, nmap_file))
     for url in urls:
         print(url)
+    # Restrict the number of ports used for selenium. Also make sure we lock it.
+    ports= [0]*concurrent_targets
+    manager = multiprocessing.Manager()
+    for port_index in range(0, concurrent_targets):
+        lock = manager.Lock()
+        ports[port_index] = SeleniumPort(selenium_starting_port+port_index, lock)
     # Handling the dockers with care, if something crashes, we need to stop all of them
     try:
         # Start cve-search docker
         cve_search = cve_search_start(no_launch)
         print('[+] Starting checking')
+        port_index = 0
         with ProcessPoolExecutor(max_workers=concurrent_targets) as executor:
             futures = []
-            port = 5001
             for url in urls:
-                futures.append(executor.submit(check_website, url, cms_scan, port))
-                port += 1
+                port = ports[port_index % concurrent_targets]
+                futures.append(executor.submit(check_website, url, port, cms_scan))
+                port_index += 1
+            #while True:
+            #    print(futures)
+            #    sleep(2)
             try:
                 for future in as_completed(futures):
                     checks.append(future.result())
@@ -699,7 +720,7 @@ if __name__ == "__main__":
                 print(check.to_string())
         # Write html report
         to_write = write_html(checks)
-        open("report.html", "w").write(report.format(to_write))
+        open("{base_dir}/report.html".format(base_dir=base_dir), "w").write(report.format(to_write))
         print("[+] Html report written to report.html")
     finally:
         if not no_launch:
