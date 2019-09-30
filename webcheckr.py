@@ -690,7 +690,8 @@ if __name__ == "__main__":
     # Handling the dockers with care, if something crashes, we need to stop all of them
     try:
         # Start cve-search docker
-        cve_search = cve_search_start(no_launch)
+        #cve_search = cve_search_start(no_launch)
+        cve_search = None
         print('[+] Starting checking')
         port_index = 0
         with ProcessPoolExecutor(max_workers=concurrent_targets) as executor:
