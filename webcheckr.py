@@ -18,7 +18,7 @@ from selenium import webdriver
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 import asyncio
 import aiohttp
-from concurrent.futures import ProcessPoolExecutor, as_completed, FIRST_COMPLETED
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed, FIRST_COMPLETED
 import traceback
 import multiprocessing
 
@@ -345,8 +345,11 @@ def query_cve(name, version, container, directory):
             if float(vuln['cvss']) > 7.5:
                 vulns['critical'] += 1
         if vulns['total'] != 0:
-            return '{0} vulnerabilities and {1} with a cvss > 7.5'.format(vulns['total'], 
-                    vulns['critical'])
+            return {'name': name,
+                    'version': version,
+                    'number_cve': vulns['total'],
+                    'number_critical_cve': vulns['critical']
+                    }
         return None
 
     
@@ -529,8 +532,25 @@ def selenium_get(url, directory, driver):
         print("[!] [{url}] Couldn't take screenshot".format(url))
         traceback.print_exc()
 
+def selenium_workflow(url, directory, queue):
+    port = queue.get()
+    with port.lock:
+        try:
+            driver, container = selenium_start(port.port)
+            # Start the scanning
+            # Get basic informations with selenium
+            screen_path, title = selenium_get(url, directory, driver)
+            driver.close()
+        except Exception as e:
+            if container:
+                remove_container(container)
+        finally:
+            if container:
+                remove_container(container)
+    queue.put(port)
+    return screen_path, title
 
-def analyze_found(url, found, cms_scan, directory):
+async def analyze_found(url, found, cms_scan, directory, executor):
     '''
     Print and launch a cve-search for all the valid element in found.
     An element is valid if a version is determined alongside the technology.
@@ -541,9 +561,22 @@ def analyze_found(url, found, cms_scan, directory):
         found (list): list of technologies found
         cms_scan (boolean): true start scan, false don't
     '''
-    # Maybe not for all the tech, we don't care about css, jquery,...
+    # Maybe not for all the tech, we don't care about css,...
     # https://www.wappalyzer.com/docs/categories
     for_return = {}
+    loop = asyncio.get_running_loop()
+    future_vulns = []     
+    for category, l in found.items():
+        for tech in l:
+            name, version = tech.split(':', 1)
+            if version != "":
+                future_vulns.append(loop.run_in_executor(executor, query_cve, name, 
+                    version, cve_search, directory))
+    completed, pending = await asyncio.wait(future_vulns)
+    results = {}
+    for t in completed:
+        if t is not None:
+            results.update(t)
     for category, l in found.items():
         print_and_report(string='|----{0}:'.format(category), directory=directory, no_print=True)
         for tech in l:
@@ -551,15 +584,15 @@ def analyze_found(url, found, cms_scan, directory):
             if version == "":
                 print_and_report('|        {0}'.format(name), directory=directory, no_print=True)
             else:
-                vuln = query_cve(name, version, cve_search, directory)
-                #vuln = None
+                vuln = results.get(name)
                 if vuln != None:
-                    print_and_report('|{3}        {0} ({1}) \033[0;31m{2}\033[0m'.format(
-                        name, version, vuln, url), directory=directory)
+                    print('|{url}        {name} ({version}) \033[0;31m{nb_cve} vulnerabilities and {nb_crit_vuln} with a cvss > 7.5\033[0m'.format(name=name, version=version, nb_cve=vuln['number_cve'], url=url, nb_crit_vuln=vuln['number_critical_cve']))
+                    print_and_report('|        {0} ({1}) \033[0;31m{2}\033[0m'.format(
+                        name, version, vuln), directory=directory)
                     for_return[name] = (version,vuln)
                 else:
-                    print_and_report('|        {0} ({1})'.format(name, version), directory=directory, 
-                            no_print=True)
+                    print_and_report('|        {0} ({1})'.format(name, version), 
+                            directory=directory, no_print=True)
     if "CMS" in found.keys():
         cms = [cms.split(':', 1)[0] for cms in found["CMS"]]
     else:
@@ -567,13 +600,6 @@ def analyze_found(url, found, cms_scan, directory):
     # Check if a known CMS is detected
     if cms is not None:   
         print_and_report("\033[0;32m[+] [{url}] {cms} found !\033[0m".format(url=url, cms=cms[0]), directory=directory)
-        print_and_report(directory=directory)
-        if cms_scan == True:
-            if cms[0] in scanners.keys():
-                thread = threading.Thread(target=cms_scanner, 
-                        args=(url, scanners[cms[0]], ),)
-                threads.append(thread)
-                thread.start()
     return for_return
 
 def write_html(checks):
@@ -626,36 +652,14 @@ def found_to_html(found):
     final += "</table>\n"
     return final
 
-
-def check_website(url, queue, cms_scan, cve_check, progress_file_lock):
+async def check_workflow(url, queue, cms_scan, cve_check, directory):
     try:
-        print("\n\033[94m[+] Scanning {0}\033[0m".format(url))
-        # Getting hostname to create report file    
-        parsed_url = urlparse(url)
-        directory = "{0}/{1}".format(base_dir, parsed_url.netloc)
-        if not os.path.exists(directory):
-            os.makedirs(directory)
-        loop = asyncio.get_event_loop()
-        screen_path = None
-        title = None
-        container = None
-        port = queue.get()
-        with port.lock:
-            try:
-                driver, container = selenium_start(port.port)
-                # Start the scanning
-                # Get basic informations with selenium
-                screen_path, title = selenium_get(url, directory, driver)
-                driver.close()
-            except Exception as e:
-                if container:
-                    remove_container(container)
-            finally:
-                if container:
-                    remove_container(container)
-        queue.put(port)
-        # Start analysing web application
-        found = wappalyzer(url)
+        executor = ThreadPoolExecutor(20)
+        loop = asyncio.get_running_loop()
+        future_selenium = loop.run_in_executor(executor, selenium_workflow, url, directory, queue)
+        # Start analyzing web application
+        found = await loop.run_in_executor(executor, wappalyzer, url)
+        #print(f"[i] [{url}] wappalyzer done")
         if found == None or not found:
             print("[x] [{url}] Couldn't get any technologies".format(url=url))
             vulns = None
@@ -664,9 +668,28 @@ def check_website(url, queue, cms_scan, cve_check, progress_file_lock):
                 vulns = None
             else:
                 # Analyze the foundings by Wappalyzer and start CMS scan if asked
-                vulns = analyze_found(url, found, cms_scan, directory)
-            
+                vulns = await analyze_found(url, found, cms_scan, directory, executor)
+                #print(f"[i] [{url}] vulns done")
+        screen_path, title = await future_selenium
         check = Check(url, directory, screen_path, title, found, vulns)
+        return check
+    except:
+        traceback.print_exc()
+
+
+def check_website(url, queue, cms_scan, cve_check, progress_file_lock):
+    try:
+        print("\033[94m[+] Scanning {0}\033[0m".format(url))
+        # Getting hostname to create report file    
+        parsed_url = urlparse(url)
+        directory = "{0}/{1}".format(base_dir, parsed_url.netloc)
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+        screen_path = None
+        title = None
+        container = None
+        loop = asyncio.new_event_loop()
+        check = loop.run_until_complete(check_workflow(url, queue, cms_scan, cve_check, directory)) 
         print('[i] [{url}] Workflow is over'.format(url=url))
         with progress_file_lock:
             print(check.__dict__, file=open("{base_dir}/.webcheckr".format(base_dir=base_dir), 'a'))
@@ -729,6 +752,7 @@ if __name__ == "__main__":
                     future.cancel()
                 executor.shutdown(wait=False)
         # Output the results
+        print()
         for check in checks:
             if check:
                 print(check.to_string())
