@@ -1,6 +1,8 @@
 argparse
-asyncio
-aiohttp
-docker
-python-libnmap
+asyncio==3.4.3
+aiohttp==3.6.2
+docker==4.0.2
+python-libnmap==0.7.0
 requests
+multiprocessing
+tqdm==4.37.0
