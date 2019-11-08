@@ -30,7 +30,9 @@ docker run -p 5000:5000 --name cvesearch ttimasdf/cve-search:withdb</br>
 - Database storage</br>
 - Update cve-search docker automatically</br>
 - Set timeout for check
-- Maybe, create a generic function/class to launch a docker</br>
+- Class for each modules (cve, foundings by wappalyzer) with to_string and to_html to make it more generic
+- Make an independent worker to give background actions to do (dirb, cms scanners)
+- Name every dockers created and delete when crash/Ctrl-C
 </br>
 <h3>Functionality to add</h3>
 - Default password checking (https://nmap.org/nsedoc/scripts/http-default-accounts.html)</br>
