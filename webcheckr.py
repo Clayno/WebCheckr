@@ -332,15 +332,23 @@ def query_cve(name, version, container, directory):
         output = output.decode().split('\n')
         response = [json.loads(i) for i in output if i is not None and i != '']
         for vuln in response:
-            cprint('CVE   : {0}'.format(vuln['id']), filename, directory=directory)
-            cprint('DATE  : {0}'.format(vuln['Published']), filename, directory=directory)
-            cprint('CVSS  : {0}'.format(vuln['cvss']), filename, directory=directory)
-            cprint('{0}'.format(vuln['summary']), filename, directory=directory)
-            cprint('\n', filename, directory=directory)
-            cprint('References:\n-----------------------\n', filename, directory=directory)
+            cprint('CVE   : {0}'.format(vuln['id']), filename, directory=directory, 
+                    no_print=True)
+            cprint('DATE  : {0}'.format(vuln['Published']), filename, directory=directory, 
+                    no_print=True)
+            cprint('CVSS  : {0}'.format(vuln['cvss']), filename, directory=directory, 
+                    no_print=True)
+            cprint('{0}'.format(vuln['summary']), filename, directory=directory, 
+                    no_print=True)
+            cprint('\n', filename, directory=directory, 
+                    no_print=True)
+            cprint('References:\n-----------------------\n', filename, directory=directory, 
+                    no_print=True)
             for url in vuln['references']:
-                cprint(url, filename, directory=directory)
-            cprint('\n', filename, directory=directory)
+                cprint(url, filename, directory=directory, 
+                    no_print=True)
+            cprint('\n', filename, directory=directory, 
+                    no_print=True)
             vulns['total'] += 1
             if float(vuln['cvss']) > 7.5:
                 vulns['critical'] += 1
@@ -379,7 +387,9 @@ def cprint(string='', filename='report.txt', directory='', no_print=False):
     """
     if not no_print:
         if pbar:
-            pbar.write(string)
+            with pbar.get_lock():
+                pbar.n = counter.value
+                pbar.write(string)
         else:
             print(string)
     if filename != '':
@@ -609,7 +619,7 @@ async def analyze_found(url, found, cms_scan, directory, executor):
                 vuln = results_parsed.get(name.lower())
                 if vuln != None:
                     warning_msg = '\033[0;31m{nb_cve} vulnerabilities and {nb_crit_vuln} with a cvss > 7.5\033[0m'.format(nb_cve=vuln['number_cve'],  nb_crit_vuln=vuln['number_critical_cve'])
-                    print('[+] {url}        {name} ({version}) {warning_msg}'.format(name=name, version=version, url=url, warning_msg=warning_msg))
+                    cprint('[+] [{url}]        {name} ({version}) {warning_msg}'.format(name=name, version=version, url=url, warning_msg=warning_msg), filename='')
                     cprint('|        {0} ({1}) \033[0;31m{2}\033[0m'.format(
                         name, version, warning_msg), directory=directory, no_print=True)
                     for_return[name] = vuln
@@ -717,7 +727,7 @@ async def check_workflow(url, queue, cms_scan, cve_check, directory):
         traceback.print_exc()
 
 
-def check_website(url, queue, cms_scan, cve_check, progress_file_lock):
+def check_website(url, queue, cms_scan, cve_check, progress_file_lock, counter):
     try:
         cprint("\033[94m[+] Scanning {0}\033[0m".format(url),
                 filename='')
@@ -746,12 +756,16 @@ def finished_check(result):
     '''
     checks.append(result)
     pbar.update()
-    pbar.refresh()
+    counter.value += 1
 
-def init(args):
-    ''' store the counter for later use '''
+def init(arg1, arg2):
+    '''
+    Initiate processes with useful globals.
+    '''
     global pbar
-    pbar = args
+    global counter
+    pbar = arg1
+    counter = arg2
 
 if __name__ == "__main__":
     parser  = argparse.ArgumentParser(description="WebCheckr - Initial check for web pentests")
@@ -791,6 +805,7 @@ if __name__ == "__main__":
     manager = multiprocessing.Manager()
     progress_file_lock = manager.Lock()
     queue = manager.Queue()
+    counter = manager.Value('i', 0)
     for port_index in range(0, concurrent_targets): 
         lock = manager.Lock()
         queue.put(SeleniumPort(selenium_starting_port+port_index, lock))
@@ -801,13 +816,13 @@ if __name__ == "__main__":
             cve_search = cve_search_start(launch_cve_docker)
         print('[+] Starting checking')
         pbar = tqdm(total=nb_urls, desc='Progress')
-        futures = []
         try:
-            with multiprocessing.Pool(concurrent_targets, initializer=init, initargs=(pbar, )) as pool:
+            with multiprocessing.Pool(concurrent_targets, initializer=init, 
+                    initargs=(pbar, counter,  )) as pool:
                 for url in urls:
-                    futures.append(pool.apply_async(check_website, 
-                            args=(url, queue, cms_scan, cve_check, progress_file_lock,),
-                            callback=finished_check))
+                    pool.apply_async(check_website, 
+                            args=(url, queue, cms_scan, cve_check, progress_file_lock, counter,),
+                            callback=finished_check)
                 pool.close()
                 pool.join()
         except:
