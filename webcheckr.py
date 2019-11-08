@@ -815,7 +815,7 @@ if __name__ == "__main__":
         if cve_check:
             cve_search = cve_search_start(launch_cve_docker)
         print('[+] Starting checking')
-        pbar = tqdm(total=nb_urls, desc='Progress')
+        pbar = tqdm(total=nb_urls, desc='Progress', position=1)
         try:
             with multiprocessing.Pool(concurrent_targets, initializer=init, 
                     initargs=(pbar, counter,  )) as pool:
