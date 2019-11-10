@@ -6,3 +6,5 @@ python-libnmap==0.7.0
 requests
 multiprocessing
 tqdm==4.37.0
+string
+random
