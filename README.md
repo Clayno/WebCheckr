@@ -18,9 +18,11 @@ docker network create webcheckr
 docker create --net=webcheckr --name webcheckr_cvesearch ttimasdf/cve-search:withdb</br>
 </br>
 <h2>Run</h2>
+
 ```
 docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock -v ${PWD}:/webcheckr --user $(id -u):$(id -g) --group-add $(stat -c '%g' /var/run/docker.sock) --net webcheckr webcheckr [OPTIONS]
 ```
+
 </br>
 It is advised to make an alias of this
 <h3>TODO</h3>
