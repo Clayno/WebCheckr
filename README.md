@@ -17,7 +17,7 @@ docker pull ttimasdf/cve-search:withdb -- takes a lot of time...</br>
 
 ```
 docker network create webcheckr
-docker create --net=webcheckr --name webcheckr_cvesearch ttimasdf/cve-search:withdb
+docker create --net=webcheckr --name cvesearch_docker ttimasdf/cve-search:withdb
 ```
 
 </br>
