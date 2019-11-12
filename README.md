@@ -14,8 +14,12 @@ docker pull selenium/standalone-chrome</br>
 docker pull ttimasdf/cve-search:withdb -- takes a lot of time...</br>
 </br>
 3 - Initiate docker image and network</br>
+
+```
 docker network create webcheckr
-docker create --net=webcheckr --name webcheckr_cvesearch ttimasdf/cve-search:withdb</br>
+docker create --net=webcheckr --name webcheckr_cvesearch ttimasdf/cve-search:withdb
+```
+
 </br>
 <h2>Run</h2>
 
