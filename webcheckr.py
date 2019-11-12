@@ -120,10 +120,11 @@ function togglediv(id) {{
 # Class containing data for a check
 class Check:
     def __init__(self, hostname, directory, screen_path, 
-            title, wappalyzer, cve):
+            screen_content, title, wappalyzer, cve):
         self.hostname = hostname
         self.directory = directory
         self.screen_path = screen_path
+        self.screen_content = screen_content
         self.title = title
         self.wappalyzer = wappalyzer
         self.cve = cve
@@ -187,18 +188,6 @@ class WappalyzerFoundings:
             final += '</td>\n'
         final += "</table>\n"
         return final
-
-
-
-
-
-
-# Class for selenium port, not really useful...
-class SeleniumPort:
-    def __init__(self, port, lock):
-        self.port = port
-        self.lock = lock
-
 
 def print_banner():
     print(
@@ -525,7 +514,7 @@ async def url_sanitize(urls_file, url, nmap_file):
         exit()
     return final
 
-def selenium_start(port):
+def selenium_start():
     '''
     Starting Selenium Chrome docker.
 
@@ -577,30 +566,27 @@ def selenium_get(url, directory, driver):
         screen_path = "{0}/{1}.png".format(directory, 
                 base64.b64encode(url.encode()).decode())
         open(screen_path, "wb").write(screen)
-        return screen_path, driver.title
+        return screen_path, driver.title, base64.b64encode(screen).decode()
     except Exception as e:
         cprint(string="[!] [{url}] Couldn't take screenshot".format(url=url),
             filename='',
             print_stdout=True)
         traceback.print_exc()
 
-def selenium_workflow(url, directory, queue):
-    port = queue.get()
-    with port.lock:
-        try:
-            driver, container = selenium_start(port.port)
-            # Start the scanning
-            # Get basic informations with selenium
-            screen_path, title = selenium_get(url, directory, driver)
-            driver.close()
-        except Exception as e:
-            if container:
-                remove_container(container)
-        finally:
-            if container:
-                remove_container(container)
-    queue.put(port)
-    return screen_path, title
+def selenium_workflow(url, directory):
+    try:
+        driver, container = selenium_start()
+        # Start the scanning
+        # Get basic informations with selenium
+        screen_path, title, screen = selenium_get(url, directory, driver)
+        driver.close()
+    except Exception as e:
+        if container:
+            remove_container(container)
+    finally:
+        if container:
+            remove_container(container)
+    return screen_path, title, screen
 
 
 async def request_async(executor, query_cve, name, 
@@ -649,7 +635,7 @@ async def analyze_found(url, found, cms_scan, directory, executor):
                 vuln = results_parsed.get(name.lower())
                 if vuln != None:
                     warning_msg = '\033[0;31m{nb_cve} vulnerabilities and {nb_crit_vuln} with a cvss > 7.5\033[0m'.format(nb_cve=vuln['number_cve'],  nb_crit_vuln=vuln['number_critical_cve'])
-                    cprint('[+] [{url}]        {name} ({version}) {warning_msg}'.format(name=name, version=version, url=url, warning_msg=warning_msg), filename='')
+                    cprint('[+] [{url}]        {name} ({version}) {warning_msg}'.format(name=name, version=version, url=url, warning_msg=warning_msg), filename='', print_stdout=True)
                     cprint('|        {0} ({1}) \033[0;31m{2}\033[0m'.format(
                         name, version, warning_msg), directory=directory)
                     for_return[name] = vuln
@@ -680,7 +666,7 @@ def write_html(checks):
             <button onclick="togglediv('content{id}')">toggle</button>
         </div>
         <div class="content" id="content{id}">
-            <img class="screenshot" src="{screen_path}">
+            <img class="screenshot" src="data:image/png;base64, {screen}">
             <p>
             <b>Directory:</b> {directory}</br>
             </p>
@@ -695,7 +681,7 @@ def write_html(checks):
         </div>
     </div>
     </br>
-    '''.format(url=check.hostname, directory=check.directory, screen_path=check.screen_path,
+    '''.format(url=check.hostname, directory=check.directory, screen=check.screen_content,
                     wappalyzer=found_to_html(check.wappalyzer), cve=cve_to_html(check.cve), 
                     id=str(i), title=check.title)
         i+=1
@@ -733,11 +719,11 @@ def cve_to_html(cve):
     final += "</table>\n"
     return final
 
-async def check_workflow(url, queue, cms_scan, cve_check, directory):
+async def check_workflow(url, cms_scan, cve_check, directory):
     try:
         executor = ThreadPoolExecutor(20)
         loop = asyncio.get_running_loop()
-        future_selenium = loop.run_in_executor(executor, selenium_workflow, url, directory, queue)
+        future_selenium = loop.run_in_executor(executor, selenium_workflow, url, directory)
         # Start analyzing web application
         found = await loop.run_in_executor(executor, wappalyzer, url)
         #print(f"[i] [{url}] wappalyzer done")
@@ -753,14 +739,14 @@ async def check_workflow(url, queue, cms_scan, cve_check, directory):
                 # Analyze the foundings by Wappalyzer and start CMS scan if asked
                 vulns = await analyze_found(url, found, cms_scan, directory, executor)
                 #print(f"[i] [{url}] vulns done")
-        screen_path, title = await future_selenium
-        check = Check(url, directory, screen_path, title, found, vulns)
+        screen_path, title, screen_content = await future_selenium
+        check = Check(url, directory, screen_path, screen_content, title, found, vulns)
         return check
     except:
         traceback.print_exc()
 
 
-def check_website(url, queue, cms_scan, cve_check, progress_file_lock, counter):
+def check_website(url, cms_scan, cve_check, progress_file_lock, counter):
     try:
         cprint("\033[94m[+] Scanning {0}\033[0m".format(url),
                 filename='', print_stdout=True)
@@ -773,7 +759,7 @@ def check_website(url, queue, cms_scan, cve_check, progress_file_lock, counter):
         title = None
         container = None
         loop = asyncio.new_event_loop()
-        check = loop.run_until_complete(check_workflow(url, queue, cms_scan, cve_check, directory)) 
+        check = loop.run_until_complete(check_workflow(url, cms_scan, cve_check, directory)) 
         cprint('[i] [{url}] Workflow is over'.format(url=url),
                 filename='', 
                 print_stdout=True)
@@ -807,7 +793,7 @@ if __name__ == "__main__":
     parser.add_argument('-l', '--launch_cve_docker', action='store_true', help='Launch cve-search docker. To start it manually: docker start cvesearch')
     parser.add_argument('-f', '--no_cve_check', action='store_true', help='Do not ceck cves for the technologies found')
     parser.add_argument('-c', '--cms_scan', action='store_true', help='Launch CMS scanner if detected. Supported: Wordpress, Joomla, Drupal')
-    parser.add_argument('-t', '--concurrent_targets', action='store', help='Number of concurrent targets to scan', required=True)
+    parser.add_argument('-t', '--concurrent_targets', action='store', help='Number of concurrent targets to scan', default=5)
     parser.add_argument('-o', '--output_dir', action='store', help='Output dir as relative path')
     group_urls = parser.add_mutually_exclusive_group(required=True)
     group_urls.add_argument('-U', '--urls_file', action='store', help='Provide file instead of url, one per line')
@@ -838,11 +824,7 @@ if __name__ == "__main__":
     # Restrict the number of ports used for selenium. Also make sure we lock it. A queue to
     manager = multiprocessing.Manager()
     progress_file_lock = manager.Lock()
-    queue = manager.Queue()
     counter = manager.Value('i', 0)
-    for port_index in range(0, concurrent_targets): 
-        lock = manager.Lock()
-        queue.put(SeleniumPort(selenium_starting_port+port_index, lock))
     # Handling the dockers with care, if something crashes, we need to stop all of them
     try:
         # Start cve-search docker
@@ -855,7 +837,7 @@ if __name__ == "__main__":
                     initargs=(pbar, counter,  )) as pool:
                 for url in urls:
                     pool.apply_async(check_website, 
-                            args=(url, queue, cms_scan, cve_check, progress_file_lock, counter,),
+                            args=(url, cms_scan, cve_check, progress_file_lock, counter,),
                             callback=finished_check)
                 pool.close()
                 pool.join()
