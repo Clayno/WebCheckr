@@ -2,11 +2,8 @@
 Initial check for web pentests.</br>
 
 <h2>Installation</h2>
-1 - First install docker and its python sdk</br>
+1 - First install docker</br>
 Refer to docker documentation for the installation.</br>
-</br>
-For python:</br>
-python3 -m pip install -r python3_dependencies</br>
 </br>
 2 - Pull required images:</br>
 docker pull wpscanteam/wpscan</br>
@@ -16,9 +13,16 @@ docker pull pgrund/joomscan</br>
 docker pull selenium/standalone-chrome</br>
 docker pull ttimasdf/cve-search:withdb -- takes a lot of time...</br>
 </br>
-3 - Initiate docker image</br>
-docker run -p 5000:5000 --name cvesearch ttimasdf/cve-search:withdb</br>
+3 - Initiate docker image and network</br>
+docker network create webcheckr
+docker create --net=webcheckr --name webcheckr_cvesearch ttimasdf/cve-search:withdb</br>
 </br>
+<h2>Run</h2>
+```
+docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock -v ${PWD}:/webcheckr --user $(id -u):$(id -g) --group-add $(stat -c '%g' /var/run/docker.sock) --net webcheckr webcheckr [OPTIONS]
+```
+</br>
+It is advised to make an alias of this
 <h3>TODO</h3>
 - Fix inconstistences in wappalyzer (puppeter ?) 
 - Change user agent for all the requests
@@ -32,7 +36,6 @@ docker run -p 5000:5000 --name cvesearch ttimasdf/cve-search:withdb</br>
 - Set timeout for check
 - Class for each modules (cve, foundings by wappalyzer) with to_string and to_html to make it more generic
 - Make an independent worker to give background actions to do (dirb, cms scanners)
-- Name every dockers created and delete when crash/Ctrl-C
 </br>
 <h3>Functionality to add</h3>
 - Default password checking (https://nmap.org/nsedoc/scripts/http-default-accounts.html)</br>
