@@ -157,6 +157,42 @@ class Check:
     def from_json(self, json):
         self.__dict__.update(json)        
 
+
+class WappalyzerFoundings:
+    def __init__(self, response):
+        applications = response['applications']
+        # Converting json into dict => found
+        found = {}
+        for cell in applications:
+            key = ''.join(v for v in cell['categories'][0].values())
+            data = '{0}:{1}'.format(cell['name'], cell['version'])
+            if key in found:
+                found[key].append(data)
+            else:
+                found[key] = [data]
+        self.foundings = found
+
+    def to_html(self):
+        if not self.found:
+            return "Nothing found"
+        final = "<table>\n"
+        for category, l in self.found.items(): 
+            final += '<tr><td>{cat}</td><td>'.format(cat=category)
+            for tech in l:
+                name, version = tech.split(':', 1)
+                if version=="" or not version or version=="None":
+                    final += '{0}</br>'.format(name)
+                else:
+                    final += '{0} ({1})</br>'.format(name, version)
+            final += '</td>\n'
+        final += "</table>\n"
+        return final
+
+
+
+
+
+
 # Class for selenium port, not really useful...
 class SeleniumPort:
     def __init__(self, port, lock):
@@ -186,6 +222,7 @@ def docker_wrapper(image, command="", **kwargs):
     container = client.containers.run(image,
             command,
             name="webcheckr_{id}".format(id=id_generator()),
+            network="webcheckr",
             detach=True, 
             auto_remove=True, 
             **kwargs)
@@ -288,20 +325,20 @@ def cve_search_start(launch_cve_docker):
         Container of cvesearch docker
     """
     if not launch_cve_docker:
-            container = docker.from_env().containers.get('cvesearch')
+            container = docker.from_env().containers.get('cvesearch_docker')
     else:
         print("[i] Starting the CVE-search docker, this may take some time...")
         # Count 5~10min to start
         command = "" 
         client = docker.from_env()
-        container = client.containers.get('cvesearch')
+        container = client.containers.get('cvesearch_docker')
         container.start()
         #container = client.containers.run(images["CVE-search"], command,
         #        ports={5000: ('127.0.0.1', 5000)} ,detach=True)
     print("[i] Checking if container is up...")
     while True:
         try:
-            response = requests.get("http://127.0.0.1:5000").status_code
+            response = requests.get("http://{name}:5000".format(name=container.name)).status_code
             if response == 200:
                 break
         except:
@@ -500,18 +537,17 @@ def selenium_start(port):
         container: Docker container
     '''
     try:
-        container = docker_wrapper(images["Selenium"],
-                ports={4444: ('127.0.0.1', port)},
+        container = docker_wrapper(images["Selenium"], 
                 shm_size="128M")
         while 1:
             try:
-                resp = requests.get('http://127.0.0.1:{port}/wd/hub/status'.format(port=port)).json()
+                resp = requests.get('http://{name}:4444/wd/hub/status'.format(name=container.name)).json()
                 if resp['value']['ready'] == True:
                     break
             except:
                 sleep(1)
                 continue
-        driver = webdriver.Remote("http://127.0.0.1:{0}/wd/hub".format(port), 
+        driver = webdriver.Remote("http://{name}:4444/wd/hub".format(name=container.name), 
                 DesiredCapabilities.CHROME)
         driver.implicitly_wait(30)
         return driver, container
@@ -727,7 +763,7 @@ async def check_workflow(url, queue, cms_scan, cve_check, directory):
 def check_website(url, queue, cms_scan, cve_check, progress_file_lock, counter):
     try:
         cprint("\033[94m[+] Scanning {0}\033[0m".format(url),
-                filename='')
+                filename='', print_stdout=True)
         # Getting hostname to create report file    
         parsed_url = urlparse(url)
         directory = "{0}/{1}".format(base_dir, parsed_url.netloc)
