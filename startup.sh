@@ -4,6 +4,8 @@ echo "Configuring dockers"
 docker network create webcheckr
 docker build -t webcheckr .
 docker create --net=webcheckr --name cvesearch_docker ttimasdf/cve-search:withdb
+docker pull selenium/standalone-chrome
+docker pull wappalyzer/cli
 
 echo "Creating file in /usr/local/bin/webcheckr (need sudo)"
 sudo tee -a /usr/local/bin/webcheckr<<EOF
