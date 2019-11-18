@@ -22,8 +22,14 @@ docker pull ttimasdf/cve-search:withdb -- takes a lot of time...
 docker network create webcheckr
 docker create --net=webcheckr --name cvesearch_docker ttimasdf/cve-search:withdb
 ```
+OR
 
-</br>
+run startup.sh, sudo is required during install
+
+```
+./startup.sh
+```
+
 <h2>Run</h2>
 
 ```
