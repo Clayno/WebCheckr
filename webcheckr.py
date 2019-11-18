@@ -529,7 +529,8 @@ def selenium_start():
                 shm_size="128M")
         while 1:
             try:
-                resp = requests.get('http://{name}:4444/wd/hub/status'.format(name=container.name)).json()
+                resp = requests.get('http://{name}:4444/wd/hub/status'
+                        .format(name=container.name)).json()
                 if resp['value']['ready'] == True:
                     break
             except:
@@ -788,17 +789,17 @@ def init(arg1, arg2):
 
 if __name__ == "__main__":
     parser  = argparse.ArgumentParser(description="WebCheckr - Initial check for web pentests")
-    parser.add_argument('-d', '--directory_bf', action='store', help='Launch directory bruteforce with provided wordlist (full path)')
-    parser.add_argument('-l', '--launch_cve_docker', action='store_true', help='Launch cve-search docker. To start it manually: docker start cvesearch')
-    parser.add_argument('-f', '--no_cve_check', action='store_true', help='Do not ceck cves for the technologies found')
+    parser.add_argument('-d', '--directory_bf', action='store', help='Launch directory bruteforce with provided wordlist. File has to be in current directory, docker reasons.')
+    parser.add_argument('-l', '--launch_cve_docker', action='store_true', help='Launch cve-search docker. To start it manually: docker start cvesearch_docker')
+    parser.add_argument('-n', '--no_cve_check', action='store_true', help='Do not ceck cves for the technologies found')
     parser.add_argument('-c', '--cms_scan', action='store_true', help='Launch CMS scanner if detected. Supported: Wordpress, Joomla, Drupal')
-    parser.add_argument('-t', '--timeout', action='store', help='Timeout used to validate urls', default=20)
+    parser.add_argument('-t', '--timeout', action='store', help='Timeout used to validate urls in seconds', default=20)
     parser.add_argument('-w', '--concurrent_targets', action='store', help='Number of concurrent targets to scan', default=5)
     parser.add_argument('-o', '--output_dir', action='store', help='Output dir as relative path')
     group_urls = parser.add_mutually_exclusive_group(required=True)
-    group_urls.add_argument('-U', '--urls_file', action='store', help='Provide file instead of url, one per line')
+    group_urls.add_argument('-U', '--urls_file', action='store', help='Provide file instead of url, one per line. File has to be in current directory, docker reasons.')
     group_urls.add_argument('-u', '--url', help="URL of target site")
-    group_urls.add_argument('-i', '--nmap_file', action='store', help='Provide XML nmap report with or instead of urls. This will launch the script to every http/https service found')
+    group_urls.add_argument('-i', '--nmap_file', action='store', help='Provide XML nmap report with or instead of urls. This will launch the script to every http/https service found. File has to be in current directory, docker reasons.')
     args = parser.parse_args()
     # Arguments
     docker_path = 'data'
