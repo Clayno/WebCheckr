@@ -36,20 +36,24 @@ run startup.sh, sudo is required during install
 docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock -v ${PWD}:/webcheckr --user $(id -u):$(id -g) --group-add $(stat -c '%g' /var/run/docker.sock) --net webcheckr webcheckr [OPTIONS]
 ```
 
+OR if setup was used
+
+```webcheckr [OPTIONS]```
+
 </br>
 It is advised to make an alias of this
 <h3>TODO</h3>
-- Fix inconstistences in wappalyzer (puppeter ?) 
-- Change user agent for all the requests
-- Fix dirb
-- Add header (cookies, server version) checks
-- Add SSL checks
+- Fix inconstistences in wappalyzer (puppeter ?) </br>
+- Change user agent for all the requests</br>
+- Fix dirb</br>
+- Add header (cookies, server version) checks</br>
+- Add SSL checks</br>
 - Add Magescan or Magento</br>
 - Handling of vhosts (or multiple technologies on one website such as multiple CMS). Currently, the scan doesn't launch</br>
 - Database storage</br>
 - Update cve-search docker automatically</br>
-- Set timeout for check
-- Class for each modules (cve, foundings by wappalyzer) with to_string and to_html to make it more generic
+- Set timeout for check</br>
+- Class for each modules (cve, foundings by wappalyzer) with to_string and to_html to make it more generic</br>
 - Make an independent worker to give background actions to do (dirb, cms scanners)
 </br>
 <h3>Functionality to add</h3>
