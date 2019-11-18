@@ -38,7 +38,9 @@ docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock -v ${PWD}:/webc
 
 OR if setup was used
 
-```webcheckr [OPTIONS]```
+```
+webcheckr [OPTIONS]
+```
 
 </br>
 It is advised to make an alias of this
