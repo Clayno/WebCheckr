@@ -450,12 +450,12 @@ def nmap_retrieve(nmap_file):
     return http_open
             
 
-async def validate_url(session, url):
+async def validate_url(session, url, timeout):
     '''
     Returns url if connectivity went right. With priority on https scheme.
     '''
-    responses = await asyncio.gather(session.get(url[0], verify_ssl=False, timeout=20), 
-            session.get(url[1], verify_ssl=False, timeout=20), return_exceptions=True)
+    responses = await asyncio.gather(session.get(url[0], verify_ssl=False, timeout=timeout), 
+            session.get(url[1], verify_ssl=False, timeout=timeout), return_exceptions=True)
     if hasattr(responses[1], 'status') and responses[1].status != None:
         return url[1]
     elif hasattr(responses[0], 'status') and responses[0].status != None:
@@ -463,7 +463,7 @@ async def validate_url(session, url):
     return None
 
 
-async def url_sanitize(urls_file, url, nmap_file):
+async def url_sanitize(urls_file, url, nmap_file, timeout):
     """
     Organize all the urls input.
     Check if the list of urls have already been scanned.
@@ -481,34 +481,33 @@ async def url_sanitize(urls_file, url, nmap_file):
     if nmap_file is not None:
         urls.extend(nmap_retrieve(nmap_file))
     urls = [url.strip() for url in urls]
+    urls = set(urls)
     # Test the urls for connectivity
     to_test = []
-    tmp_urls = []
+    tmp_urls = set()
     async with aiohttp.ClientSession() as session:
         for url in urls:
             if '://' not in url: 
                 hostname = urlparse('http://'+url).hostname
-                tmp_urls.append(('http://{0}'.format(url), 
+                tmp_urls.add(('http://{0}'.format(url), 
                     'https://{0}'.format(url)))
-                to_test.append(validate_url(session, ('http://{0}'.format(url), 
-                    'https://{0}'.format(url))))
             else:
                 hostname = urlparse(url).hostname
-                tmp_urls.append(('http://{0}'.format(hostname), 
+                tmp_urls.add(('http://{0}'.format(hostname), 
                     'https://{0}'.format(hostname)))
-                to_test.append(validate_url(session, ('http://{0}'.format(hostname),
-                    'https://{0}'.format(hostname))))  
-            if os.path.exists(urlparse(tmp_urls[-1][0]).netloc):
-                print("[-] Removing {0} (already scanned)".format(url))
-                to_test.pop()
-                break
+        for urls in tmp_urls:
+            to_test.append(validate_url(session, urls, timeout))
         results = await asyncio.gather(*to_test)   
+    
     final = []
-    for i in range(len(to_test)):
+    to_test = list(to_test)
+    tmp_urls = list(tmp_urls)
+    for i in range(len(tmp_urls)):
         if not results[i]:
             print("[x] Impossible to reach {0}. Removing it...".format(urlparse(tmp_urls[i][0]).netloc))
         else:
             final.append(results[i])
+    final = list(set(final))
     if len(final) == 0:
         print("[x] No urls provided. Quitting...")
         exit()
@@ -793,7 +792,8 @@ if __name__ == "__main__":
     parser.add_argument('-l', '--launch_cve_docker', action='store_true', help='Launch cve-search docker. To start it manually: docker start cvesearch')
     parser.add_argument('-f', '--no_cve_check', action='store_true', help='Do not ceck cves for the technologies found')
     parser.add_argument('-c', '--cms_scan', action='store_true', help='Launch CMS scanner if detected. Supported: Wordpress, Joomla, Drupal')
-    parser.add_argument('-t', '--concurrent_targets', action='store', help='Number of concurrent targets to scan', default=5)
+    parser.add_argument('-t', '--timeout', action='store', help='Timeout used to validate urls', default=20)
+    parser.add_argument('-w', '--concurrent_targets', action='store', help='Number of concurrent targets to scan', default=5)
     parser.add_argument('-o', '--output_dir', action='store', help='Output dir as relative path')
     group_urls = parser.add_mutually_exclusive_group(required=True)
     group_urls.add_argument('-U', '--urls_file', action='store', help='Provide file instead of url, one per line')
@@ -814,14 +814,14 @@ if __name__ == "__main__":
     if args.nmap_file:
         nmap_file = os.path.join(docker_path, args.nmap_file)
     concurrent_targets = int(args.concurrent_targets)
-    selenium_starting_port = 5001
+    timeout = int(args.timeout)
     directory = args.output_dir if args.output_dir else 'webcheckr'
     base_dir = os.path.join(os.getcwd(), docker_path,  directory)
     # L33t banner
     print_banner()
     # Sanitize the list of urls
     loop = asyncio.get_event_loop()
-    urls = loop.run_until_complete(url_sanitize(urls_file, url, nmap_file))
+    urls = loop.run_until_complete(url_sanitize(urls_file, url, nmap_file, timeout))
     for url in urls:
         print(url)
     nb_urls = len(urls)
