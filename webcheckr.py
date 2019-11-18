@@ -454,8 +454,8 @@ async def validate_url(session, url):
     '''
     Returns url if connectivity went right. With priority on https scheme.
     '''
-    responses = await asyncio.gather(session.get(url[0], verify_ssl=False, timeout=10), 
-            session.get(url[1], verify_ssl=False, timeout=10), return_exceptions=True)
+    responses = await asyncio.gather(session.get(url[0], verify_ssl=False, timeout=20), 
+            session.get(url[1], verify_ssl=False, timeout=20), return_exceptions=True)
     if hasattr(responses[1], 'status') and responses[1].status != None:
         return url[1]
     elif hasattr(responses[0], 'status') and responses[0].status != None:
@@ -801,17 +801,22 @@ if __name__ == "__main__":
     group_urls.add_argument('-i', '--nmap_file', action='store', help='Provide XML nmap report with or instead of urls. This will launch the script to every http/https service found')
     args = parser.parse_args()
     # Arguments
+    docker_path = 'data'
     url =  args.url
     directory_bf = args.directory_bf
-    urls_file = args.urls_file
+    urls_file = None
+    if args.urls_file:
+        urls_file = os.path.join(docker_path, args.urls_file)
     launch_cve_docker = args.launch_cve_docker
     cve_check = not args.no_cve_check
     cms_scan = args.cms_scan
-    nmap_file = args.nmap_file
+    nmap_file = None
+    if args.nmap_file:
+        nmap_file = os.path.join(docker_path, args.nmap_file)
     concurrent_targets = int(args.concurrent_targets)
     selenium_starting_port = 5001
     directory = args.output_dir if args.output_dir else 'webcheckr'
-    base_dir = os.path.join(os.getcwd(), directory)
+    base_dir = os.path.join(os.getcwd(), docker_path,  directory)
     # L33t banner
     print_banner()
     # Sanitize the list of urls
