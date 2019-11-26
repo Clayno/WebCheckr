@@ -493,8 +493,9 @@ async def url_sanitize(urls_file, url, nmap_file, timeout):
                     'https://{0}'.format(url)))
             else:
                 hostname = urlparse(url).hostname
-                tmp_urls.add(('http://{0}'.format(hostname), 
-                    'https://{0}'.format(hostname)))
+                port = urlparse(url).port
+                tmp_urls.add(('http://{0}:{1}'.format(hostname, port), 
+                    'https://{0}:{1}'.format(hostname, port)))
         for urls in tmp_urls:
             to_test.append(validate_url(session, urls, timeout))
         results = await asyncio.gather(*to_test)   
