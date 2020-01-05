@@ -147,7 +147,7 @@ def selenium_workflow(url, directory):
     
     try:
         driver, container = selenium_start()
-        credentials_filename = 'data/data/creds.lst'
+        credentials_filename = '/webcheckr/data/creds.lst'
         selenium_module = SeleniumModule(url, directory, driver, cprinter)
         credscheckr_module = CredsCheckrModule(url, credentials_filename, 
                 container.name, 4444, cprinter)
@@ -351,7 +351,7 @@ if __name__ == "__main__":
     group_urls.add_argument('-i', '--nmap_file', action='store', help='Provide XML nmap report with or instead of urls. This will launch the script to every http/https service found. File has to be in current directory, docker reasons.')
     args = parser.parse_args()
     # Arguments
-    docker_path = 'data'
+    docker_path = 'shared'
     url =  args.url
     directory_bf = args.directory_bf
     urls_file = None
