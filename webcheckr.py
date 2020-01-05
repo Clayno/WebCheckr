@@ -3,8 +3,6 @@
 
 import sys
 import os
-import docker
-import json
 import requests
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -12,128 +10,49 @@ import threading
 import argparse
 import os
 import base64
-from urllib.parse import urlparse
-from time import sleep
-from selenium import webdriver
-from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 import asyncio
 import aiohttp
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed, FIRST_COMPLETED
 import traceback
 import multiprocessing
+import logging
 from tqdm import tqdm
-import string
-import random
-
-# Docker images installed and used
-images = {
-        "Wappalyzer": "wappalyzer/cli",
-        "Wpscan": "wpscanteam/wpscan",
-        "Gobuster": "kodisha/gobuster",
-        "Joomscan": "pgrund/joomscan",
-        "Drupwn": "immunit/drupwn",
-        "CVE-search": "ttimasdf/cve-search:withdb",
-        "Selenium": "selenium/standalone-chrome",
-        "Changeme": "ztgrace/changeme",
-        "Dirhunt": "layno/dirhunt"
-        }
-
-# Commands given to dockers
-commands = {
-        "Wpscan": "--url {0} --no-banner -f cli-no-colour",
-        "Joomscan": "--url {0}",
-        "Drupwn": "enum {0}",
-        "CVE-search": "{0}",
-        "Wappalyzer": "{0}",
-        "Wappalyzer_recursive": "{0} --recursive=1",
-        "Gobuster": "-fw -w {0} -u {1} -k -q",
-        "Selenium": "",
-        "Changeme": "{0}",
-        "Dirhunt": "{0}"
-        }
-
-# CMS for which we have scanners
-scanners = {
-        "WordPress": "Wpscan",
-        "Joomla": "Joomscan",
-        "Drupal": "Drupwn"
-        }
+from multiprocessing.pool import ThreadPool
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed, FIRST_COMPLETED
+from urllib.parse import urlparse
+from time import sleep
+# Custom modules
+from modules.credscheckr import CredsCheckrModule
+from modules.wappalyzer import WappalyzerModule
+from modules.cvesearch import cve_search_start, query_cve
+from modules.selenium import selenium_start, SeleniumModule
+from helpers.cprint import Cprinter
+from helpers.dockers import remove_container, docker_wrapper, cleanup_webcheckr_dockers
+from helpers.urls import nmap_retrieve, validate_url, url_sanitize
+from report.report import cve_to_html, write_html
 
 # List of class check
 checks = []
 
-# Template of report
-report = '''<!DOCTYPE html>
-<html>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<head>
-<style>
-body{{
-    font-family: "Arial";
-}}
-
-h2{{
-    color: black;
-}}
-
-.content{{
-    position: static;
-    overflow: hidden;
-    border: 1px solid rgb(204, 204, 204);
-    border-radius: 5px;
-    padding: 0.01em 16px;
-}}
-
-.screenshot{{
-    position: static;
-    float: right;
-    max-width:30%;
-    max-height:30%;
-}}
-
-table {{
-  border-collapse: collapse;
-}}
-th, td {{
-  border-bottom: 1px solid #ddd;
-}}
-
-tr:hover {{background-color: #f5f5f5;}}
-
-</style>
-<title>WebCheckr Report</title>
-</head>
-<body>
-
-{0}
-
-</body>
-<script>
-function togglediv(id) {{
-    var div = document.getElementById(id);
-    div.style.display = div.style.display == "none" ? "block" : "none";
-    }}
-</script>
-</html>'''
-
-
 # Class containing data for a check
 class Check:
     def __init__(self, hostname, directory, screen_path, 
-            screen_content, title, wappalyzer, cve):
+            screen_content, title, cve, modules):
         self.hostname = hostname
         self.directory = directory
         self.screen_path = screen_path
         self.screen_content = screen_content
         self.title = title
-        self.wappalyzer = wappalyzer
         self.cve = cve
+        self.modules = modules
 
-    def to_string(self):
+    def to_string(self):    
+        return "Not Yet"
+        """
         final = "[+] Scan report for {0}\n".format(self.hostname)
-        if self.wappalyzer == None:
-            return "Nothing found"
-        for category, l in self.wappalyzer.items():
+        if self.wappalyzer.result == None or not self.wappalyzer.result:
+            final += "Nothing found\n"
+            return final
+        for category, l in self.wappalyzer.result.items():
             final += '|----{0}:\n'.format(category)
             for tech in l:
                 name, version = tech.split(':', 1)
@@ -145,49 +64,19 @@ class Check:
                         final += '|        {0} ({1}) {2}\n'.format(name, version, warning_msg)
                     else:
                          final += '|        {0} ({1})\n'.format(name, version)
-        if "CMS" in self.wappalyzer.keys():
-            cms = [cms.split(':', 1)[0] for cms in self.wappalyzer["CMS"]]
+        if "CMS" in self.wappalyzer.result.keys():
+            cms = [cms.split(':', 1)[0] for cms in self.wappalyzer.result["CMS"]]
         else:
             cms = None
         # Check if a known CMS is detected
         if cms is not None:   
             final += "\n[i] {0} found !".format(cms[0])
         final += "\n"
-        return final
+        return final"""
 
     def from_json(self, json):
         self.__dict__.update(json)        
 
-
-class WappalyzerFoundings:
-    def __init__(self, response):
-        applications = response['applications']
-        # Converting json into dict => found
-        found = {}
-        for cell in applications:
-            key = ''.join(v for v in cell['categories'][0].values())
-            data = '{0}:{1}'.format(cell['name'], cell['version'])
-            if key in found:
-                found[key].append(data)
-            else:
-                found[key] = [data]
-        self.foundings = found
-
-    def to_html(self):
-        if not self.found:
-            return "Nothing found"
-        final = "<table>\n"
-        for category, l in self.found.items(): 
-            final += '<tr><td>{cat}</td><td>'.format(cat=category)
-            for tech in l:
-                name, version = tech.split(':', 1)
-                if version=="" or not version or version=="None":
-                    final += '{0}</br>'.format(name)
-                else:
-                    final += '{0} ({1})</br>'.format(name, version)
-            final += '</td>\n'
-        final += "</table>\n"
-        return final
 
 def print_banner():
     print(
@@ -203,401 +92,95 @@ def print_banner():
     )
 
 
-def id_generator(size=6, chars=string.ascii_lowercase + string.digits):
-    return ''.join(random.choices(chars, k=size))
+def init_logging(verbose=False, debug=False, logfile=None):
+    # Set up our logging object
+    logger = logging.getLogger('webcheckr')
 
-def docker_wrapper(image, command="", **kwargs):
-    client = docker.from_env()
-    container = client.containers.run(image,
-            command,
-            name="webcheckr_{id}".format(id=id_generator()),
-            network="webcheckr",
-            detach=True, 
-            auto_remove=True, 
-            **kwargs)
-    return container
-
-def wappalyzer(url):
-    """
-    Launch Wappalyzer docker for the specified URL.
-
-    Args:
-        url (str): URL to analyse
-
-    Returns:
-        None if Wappalyzer doesn't work
-        Dict of found technologies otherwise
-    """
-    try: 
-        container = docker_wrapper(images["Wappalyzer"], 
-                commands["Wappalyzer_recursive"].format(url))
-        response = ""
-        for line in container.logs(stream=True):
-            response += line.decode()
-        # Sometimes, Wappalyzer doesn't work in recursive mode :'(
-        try:
-            response = json.loads(response)
-        except:
-            container = docker_wrapper(images["Wappalyzer"], 
-                commands["Wappalyzer"].format(url))
-            response = ""
-            for line in container.logs(stream=True):
-                response += line.decode()
-            # Now we have to parse the JSON response
-            try:
-                response = json.loads(response)
-            except:
-                # If we can't parse it, means nothing was found !
-                return None
-        applications = response['applications']
-        # Converting json into dict => found
-        found = {}
-        for cell in applications:
-            key = ''.join(v for v in cell['categories'][0].values())
-            data = '{0}:{1}'.format(cell['name'], cell['version'])
-            if key in found:
-                found[key].append(data)
-            else:
-                found[key] = [data]
-        return found
-    finally:
-        remove_container(container)
-
-
-def cms_scanner(url, scanner, directory):
-    """
-    Launch the scanner for the found CMS on the url.
-
-    Args:
-        url (str): URL to scan
-        scanner (str): CMS scanner
-    """
-    cprint("[+] Launching {0}".format(scanner))
-    try:
-        client = docker.from_env()
-        container = client.containers.run(images[scanner], commands[scanner].format(url), 
-                detach=True, auto_remove=True)
-        for line in container.logs(stream=True):
-            cprint(line.decode().strip(), "{0}.txt".format(scanner), directory=directory)
-    finally:
-        remove_container(container)
-
-def gobuster(url, wordlist, directory):
-    """
-    Launch Gobuster docker.
-
-    Args:
-        url (str): URL to bruteforce
-    """
-    print("[i] Bruteforcing directories/files in background")
-    path, filename = os.path.split(wordlist)
-    try:
-        # Directory bruteforce with force wildcards without checking certificate
-        command = commands["Gobuster"].format("/wordlists/".format(filename), url)
-        client = docker.from_env()
-        container = client.containers.run(images["Gobuster"], command, detach=True,
-                volumes={path: {'bind': '/wordlists', 'mode': 'ro'}},
-                auto_remove=True)
-        for line in container.logs(stream=True):
-            cprint(line.decode().strip(), "gobuster.txt", directory=directory)
-    except:
-        remove_container(container)
-
-def cve_search_start(launch_cve_docker):
-    """
-    Starts the CVE-search docker.
-
-    Args:
-        launch_cve_docker (boolean): true start a docker, false get the one running
-
-    Returns:
-        Container of cvesearch docker
-    """
-    if not launch_cve_docker:
-            container = docker.from_env().containers.get('cvesearch_docker')
+    if debug:
+        logger.setLevel(logging.DEBUG)
+    elif verbose:
+        logger.setLevel(logging.INFO)
     else:
-        print("[i] Starting the CVE-search docker, this may take some time...")
-        # Count 5~10min to start
-        command = "" 
-        client = docker.from_env()
-        container = client.containers.get('cvesearch_docker')
-        container.start()
-        #container = client.containers.run(images["CVE-search"], command,
-        #        ports={5000: ('127.0.0.1', 5000)} ,detach=True)
-    print("[i] Checking if container is up...")
-    while True:
-        try:
-            response = requests.get("http://{name}:5000".format(name=container.name)).status_code
-            if response == 200:
-                break
-        except:
-            pass
-        sleep(2)
-    return container
+        logger.setLevel(logging.WARNING)
 
-def query_cve(name, version, container, directory):
-    """
-    Runs a search in the CVE-search container.
+    if logfile:
+        # Create file handler which logs even debug messages
+        #######################################################################
+        fh = logging.FileHandler(logfile)
 
-    Args:
-        name (str): Name of the technology to analyse
-        version (str): Version of the technology to analyse
-        container: CVE-search container
-    """
-    filename = 'cve_search_{0}_{1}.txt'.format(name, version)
-    name = name.lower().replace(" ", ":")
-    command = "search.py -p '{0}:{1}' -o json".format(name, version)
-    exit_code, output = container.exec_run(command)
-    vulns = {
-                'total': 0,
-                'critical': 0
-            }
-    if output == None:
-        pass
-    else:
+        # create formatter and add it to the handler
+        formatter = logging.Formatter(
+            '[%(asctime)s][%(module)s][%(funcName)s][%(levelname)s] %(message)s')
+        fh.setFormatter(formatter)
+        logger.addHandler(fh)
 
-        output = output.decode().split('\n')
-        response = [json.loads(i) for i in output if i is not None and i != '']
-        for vuln in response:
-            cprint('CVE   : {0}'.format(vuln['id']), filename, directory=directory) 
-            cprint('DATE  : {0}'.format(vuln['Published']), filename, directory=directory) 
-            cprint('CVSS  : {0}'.format(vuln['cvss']), filename, directory=directory) 
-            cprint('{0}'.format(vuln['summary']), filename, directory=directory)
-            cprint('\n', filename, directory=directory)
-            cprint('References:\n-----------------------\n', filename, directory=directory)
-            for url in vuln['references']:
-                cprint(url, filename, directory=directory) 
-            cprint('\n', filename, directory=directory) 
-            vulns['total'] += 1
-            if float(vuln['cvss']) > 7.5:
-                vulns['critical'] += 1
-        if vulns['total'] != 0:
-            return {'name': name,
-                    'version': version,
-                    'number_cve': vulns['total'],
-                    'number_critical_cve': vulns['critical']
-                    }
-        return None
+    # Set up the StreamHandler so we can write to the console
+    ###########################################################################
+    #formatter = logging.Formatter('[%(asctime)s][%(module)s][%(funcName)s] %(message)s', datefmt='%H:%M:%S')
 
-    
-def remove_container(container):
-    """
-    Safely removes containers.
-    """
-    try: 
-        statuses = ['removed', 'exited', 'dead']
-        if container.status not in statuses:
-            container.kill()
-    except:
-        pass
+    #streamHandler = logging.StreamHandler(sys.stdout)
+    #streamHandler.setFormatter(formatter)
+    #logger.addHandler(streamHandler)
 
-def cprint(string='', filename='report.txt', directory='', print_stdout=False):
-    """
-    Print to output and to file.
-
-    Note:
-        If filename is not empty, write to filename in the specified
-        directory.
-
-    Args:
-        string (str): String to print
-        filename (str): File to write to
-        directory (str): Directory to write to
-    """
-    if print_stdout:
-        if pbar:
-            with pbar.get_lock():
-                pbar.n = counter.value
-                pbar.write(string)
-        else:
-            print(string)
-    if filename != '':
-        if not os.path.exists(directory):
-            os.makedirs(directory)
-        filename = "{0}/{1}".format(directory, filename)
-        if os.path.exists(filename):
-            print(string, file=open(filename, 'a'))
-        else:
-            print(string, file=open(filename, 'w'))
-
-
-def nmap_retrieve(nmap_file):
-    """
-    Parse and retrieve http/https services of a host.
-
-    Args:
-        nmap_file (str): Path of the nmap file 
-
-    Returns:
-        List of http/https services urls found
-    """
-    from libnmap.parser import NmapParser
-    http_open = []
-    nmap = NmapParser.parse_fromfile(nmap_file)
-    for host in nmap.hosts:
-        for port in host.get_open_ports():
-            if port[1] == 'tcp':
-                if 'http' in host.get_service(port[0]).service and 'https' not in host.get_service(port[0]).service:
-                    if host.hostnames:
-                        http_open.append("http://{0}:{1}".format(host.hostnames[0], port[0]))
-                    else:
-                        http_open.append("http://{0}:{1}".format(host.address, port[0]))
-                elif 'https' in host.get_service(port[0]).service:
-                    if host.hostnames:
-                        http_open.append("https://{0}:{1}".format(host.hostnames[0], port[0]))
-                    else:
-                        http_open.append("https://{0}:{1}".format(host.address, port[0]))
-    return http_open
-            
-
-async def validate_url(session, url, timeout):
-    '''
-    Returns url if connectivity went right. With priority on https scheme.
-    '''
-    responses = await asyncio.gather(session.get(url[0], verify_ssl=False, timeout=timeout), 
-            session.get(url[1], verify_ssl=False, timeout=timeout), return_exceptions=True)
-    if hasattr(responses[1], 'status') and responses[1].status != None:
-        return url[1]
-    elif hasattr(responses[0], 'status') and responses[0].status != None:
-        return url[0]
-    return None
-
-
-async def url_sanitize(urls_file, url, nmap_file, timeout):
-    """
-    Organize all the urls input.
-    Check if the list of urls have already been scanned.
-
-    Args:
-        urls_file (str): Path to file containing the urls to scan
-        url (str): Single url to scan
-        nmap_file (str): Path to nmap scan to retrieve urls to scan from
-    """
-    urls = []
-    if urls_file is not None:
-        urls = open(urls_file).readlines()
-    elif url is not None:
-        urls=[url]
-    if nmap_file is not None:
-        urls.extend(nmap_retrieve(nmap_file))
-    urls = [url.strip() for url in urls]
-    urls = set(urls)
-    # Test the urls for connectivity
-    to_test = []
-    tmp_urls = set()
-    async with aiohttp.ClientSession() as session:
-        for url in urls:
-            if '://' not in url: 
-                hostname = urlparse('http://'+url).hostname
-                tmp_urls.add(('http://{0}'.format(url), 
-                    'https://{0}'.format(url)))
-            else:
-                hostname = urlparse(url).hostname
-                port = urlparse(url).port
-                tmp_urls.add(('http://{0}:{1}'.format(hostname, port), 
-                    'https://{0}:{1}'.format(hostname, port)))
-        for urls in tmp_urls:
-            to_test.append(validate_url(session, urls, timeout))
-        results = await asyncio.gather(*to_test)   
-    
-    final = []
-    to_test = list(to_test)
-    tmp_urls = list(tmp_urls)
-    for i in range(len(tmp_urls)):
-        if not results[i]:
-            print("[x] Impossible to reach {0}. Removing it...".format(urlparse(tmp_urls[i][0]).netloc))
-        else:
-            final.append(results[i])
-    final = list(set(final))
-    if len(final) == 0:
-        print("[x] No urls provided. Quitting...")
-        exit()
-    return final
-
-def selenium_start():
-    '''
-    Starting Selenium Chrome docker.
-
-    Args:
-        port (int): Port to use for the selenium docker 
-
-    Returns:
-        driver: Driver associated to the selenium container
-        container: Docker container
-    '''
-    try:
-        container = docker_wrapper(images["Selenium"], 
-                shm_size="128M")
-        while 1:
-            try:
-                resp = requests.get('http://{name}:4444/wd/hub/status'
-                        .format(name=container.name)).json()
-                if resp['value']['ready'] == True:
-                    break
-            except:
-                sleep(1)
-                continue
-        driver = webdriver.Remote("http://{name}:4444/wd/hub".format(name=container.name), 
-                DesiredCapabilities.CHROME)
-        driver.implicitly_wait(30)
-        return driver, container
-    except Exception as e:
-        traceback.print_exc()
-        if container:
-            remove_container(container)
-        return None
-
-def selenium_get(url, directory, driver):
-    '''
-    Get a screenshot and the title of the landing page.
-
-    Args:
-        url (str): Url to fetch
-
-    Returns:
-        path of the screenshot
-    '''
-    try:
-        driver.get(url)
-        cprint(string="\033[0;32m[i] [{url}] Title: {title}\033[0m".format(url=url, 
-            title=driver.title),
-            filename='',
-            print_stdout=True)
-        screen = driver.get_screenshot_as_png()
-        screen_path = "{0}/{1}.png".format(directory, 
-                base64.b64encode(url.encode()).decode())
-        open(screen_path, "wb").write(screen)
-        return screen_path, driver.title, base64.b64encode(screen).decode()
-    except Exception as e:
-        cprint(string="[!] [{url}] Couldn't take screenshot".format(url=url),
-            filename='',
-            print_stdout=True)
-        traceback.print_exc()
+    return logger
 
 def selenium_workflow(url, directory):
+    class SeleniumThreadExecutor:
+        def __init__(self, thread_num):
+            self.results = []
+            self.pool = ThreadPool(thread_num)
+
+        def callback(self, result):
+            # Get modules results
+            if result is not None:
+                self.results.append(result)
+
+        def schedule(self, function, args=()):
+            self.pool.apply_async(function, args=args, callback=self.callback)
+
+        def wait(self):
+            self.pool.close()
+            self.pool.join()
+
+        def terminate(self):
+            self.pool.terminate()
+    
     try:
         driver, container = selenium_start()
-        # Start the scanning
-        # Get basic informations with selenium
-        screen_path, title, screen = selenium_get(url, directory, driver)
+        credentials_filename = 'data/data/creds.lst'
+        selenium_module = SeleniumModule(url, directory, driver, cprinter)
+        credscheckr_module = CredsCheckrModule(url, credentials_filename, 
+                container.name, 4444, cprinter)
+        try:
+            executor = SeleniumThreadExecutor(5)
+            # Schedule all the tasks to do with Selenium
+            executor.schedule(credscheckr_module.run)
+            executor.schedule(selenium_module.run)
+            executor.wait()
+        except:
+            traceback.print_exc()
+            if executor is not None:
+                executor.terminate()
+        cprinter.logger.info(f"[{url}] Selenium workflow ended") 
         driver.close()
     except Exception as e:
+        traceback.print_exc()
         if container:
             remove_container(container)
     finally:
         if container:
             remove_container(container)
-    return screen_path, title, screen
+    return executor.results
 
 
 async def request_async(executor, query_cve, name, 
-                    version, cve_search, directory):
+                    version, cve_search, directory, cprinter):
     '''
     Workaround in analyze_found to launch threads.
     '''
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(executor, query_cve, name, 
-                    version, cve_search, directory)
+                    version, cve_search, directory, cprinter)
 
 async def analyze_found(url, found, cms_scan, directory, executor):
     '''
@@ -610,147 +193,104 @@ async def analyze_found(url, found, cms_scan, directory, executor):
         found (list): list of technologies found
         cms_scan (boolean): true start scan, false don't
     '''
-    # Maybe not for all the tech, we don't care about css,...
-    # https://www.wappalyzer.com/docs/categories
-    for_return = {}
-    loop = asyncio.get_running_loop()
-    future_vulns = []     
-    for category, l in found.items():
-        for tech in l:
-            name, version = tech.split(':', 1)
-            if version and version!="None" and version != "":
-                future_vulns.append(request_async(executor, query_cve, name, 
-                    version, cve_search, directory))
-    results = await asyncio.gather(*future_vulns)
-    results_parsed = {}
-    for task in results:
-        if task:
-            results_parsed[task.get('name')] = task
-    for category, l in found.items():
-        cprint(string='|----{0}:'.format(category), directory=directory)
-        for tech in l:
-            name, version = tech.split(':', 1)
-            if not version or version=="None" or version=="":
-                cprint('|        {0}'.format(name), directory=directory)
-            else:
-                vuln = results_parsed.get(name.lower())
-                if vuln != None:
-                    warning_msg = '\033[0;31m{nb_cve} vulnerabilities and {nb_crit_vuln} with a cvss > 7.5\033[0m'.format(nb_cve=vuln['number_cve'],  nb_crit_vuln=vuln['number_critical_cve'])
-                    cprint('[+] [{url}]        {name} ({version}) {warning_msg}'.format(name=name, version=version, url=url, warning_msg=warning_msg), filename='', print_stdout=True)
-                    cprint('|        {0} ({1}) \033[0;31m{2}\033[0m'.format(
-                        name, version, warning_msg), directory=directory)
-                    for_return[name] = vuln
+    try:
+        # Maybe not for all the tech, we don't care about css,...
+        # https://www.wappalyzer.com/docs/categories
+        cprinter.logger.info(f'[{url}] Starting analyzing for CVEs') 
+        for_return = {}
+        loop = asyncio.get_running_loop()
+        future_vulns = []     
+        for category, l in found.items():
+            for tech in l:
+                name, version = tech.split(':', 1)
+                if version and version!="None" and version != "":
+                    future_vulns.append(request_async(executor, query_cve, name, 
+                        version, cve_search, directory, cprinter))
+        results = await asyncio.gather(*future_vulns)
+        results_parsed = {}
+        for task in results:
+            if task:
+                results_parsed[task.get('name')] = task
+        for category, l in found.items():
+            cprinter.cprint(string='|----{0}:'.format(category), url=url)
+            for tech in l:
+                name, version = tech.split(':', 1)
+                if not version or version=="None" or version=="":
+                    cprinter.cprint('|        {0}'.format(name), url=url)
                 else:
-                    cprint('|        {0} ({1})'.format(name, version), 
-                            directory=directory)
-    if "CMS" in found.keys():
-        cms = [cms.split(':', 1)[0] for cms in found["CMS"]]
-    else:
-        cms = None
-    # Check if a known CMS is detected
-    if cms is not None:   
-        cprint("\033[0;32m[+] [{url}] {cms} found !\033[0m".format(url=url, cms=cms[0]), 
-                directory=directory, 
-                print_stdout=True)
-    return for_return
-
-def write_html(checks):
-    final = ""
-    i = 0
-    for check in checks:
-        if check is None:
-            final += ''
+                    vuln = results_parsed.get(name.lower())
+                    if vuln != None:
+                        warning_msg = '\033[0;31m{nb_cve} vulnerabilities and {nb_crit_vuln} with a cvss > 7.5\033[0m'.format(nb_cve=vuln['number_cve'],  nb_crit_vuln=vuln['number_critical_cve'])
+                        cprinter.cprint(f'[+] [{url}]        {name} ({version}) {warning_msg}', filename='', print_stdout=True)
+                        cprinter.cprint(f'|        {name} ({version}) \033[0;31m{warning_msg}\033[0m', url=url)
+                        for_return[name] = vuln
+                    else:
+                        cprinter.cprint(f'|        {name} ({version})', url=url)
+        if "CMS" in found.keys():
+            cms = [cms.split(':', 1)[0] for cms in found["CMS"]]
         else:
-            final += '''<div class="check">
-        <div class="check-title">
-            <h2>{url} ({title})</h2>
-            <button onclick="togglediv('content{id}')">toggle</button>
-        </div>
-        <div class="content" id="content{id}">
-            <img class="screenshot" src="data:image/png;base64, {screen}">
-            <p>
-            <b>Directory:</b> {directory}</br>
-            </p>
-            <p class="techologies">
-            <b>Technologies found:</b></br>
-                {wappalyzer}</br>
-            </p>
-            <p class="cve">
-            <b>CVE found:</b></br>
-                {cve}</br>
-            </p>
-        </div>
-    </div>
-    </br>
-    '''.format(url=check.hostname, directory=check.directory, screen=check.screen_content,
-                    wappalyzer=found_to_html(check.wappalyzer), cve=cve_to_html(check.cve), 
-                    id=str(i), title=check.title)
-        i+=1
-    return final
-        
-def found_to_html(found):
-    '''
-    Templates technologies found in html.
-    '''
-    if not found:
-        return "Nothing found"
-    final = "<table>\n"
-    for category, l in found.items(): 
-        final += '<tr><td>{cat}</td><td>'.format(cat=category)
-        for tech in l:
-            name, version = tech.split(':', 1)
-            if version=="" or not version or version=="None":
-                final += '{0}</br>'.format(name)
-            else:
-                final += '{0} ({1})</br>'.format(name, version)
-        final += '</td>\n'
-    final += "</table>\n"
-    return final
-
-def cve_to_html(cve):
-    '''
-    Templates cve found in html.
-    '''
-    if not cve:
-        return "Nothing found"
-    final = "<table>\n"
-    final += '<th>Technology</th><th>Nb vulns</th><th>Nb critical</th>\n'
-    for vuln in cve.values(): 
-        final += '<tr><td>{name}:{version}</td><td>{number_cve}</td><td>{number_critical_cve}</td></tr>\n'.format(name=vuln['name'], version=vuln['version'], number_cve=vuln['number_cve'], number_critical_cve=vuln['number_critical_cve'])
-    final += "</table>\n"
-    return final
+            cms = None
+        # Check if a known CMS is detected
+        if cms is not None:   
+            cprinter.found(f"{cms[0]} found !", url=url)
+        return for_return
+    except:
+        traceback.print_exc()
 
 async def check_workflow(url, cms_scan, cve_check, directory):
     try:
+        # Initialize modules
+        wappalyzer_module = WappalyzerModule(url, cprinter.logger)
+        modules = []
         executor = ThreadPoolExecutor(20)
         loop = asyncio.get_running_loop()
         future_selenium = loop.run_in_executor(executor, selenium_workflow, url, directory)
         # Start analyzing web application
-        found = await loop.run_in_executor(executor, wappalyzer, url)
-        #print(f"[i] [{url}] wappalyzer done")
-        if found == None or not found:
-            cprint("[x] [{url}] Couldn't get any technologies".format(url=url),
+        found = await loop.run_in_executor(executor, wappalyzer_module.run)
+        # Gathering results from modules
+        wap_module_result = wappalyzer_module.get_result()
+        modules.append(wap_module_result)
+        if wap_module_result['content'] == None:
+            cprinter.logger.info(f'[{url}] No content from wappalyzer')
+            cprinter.cprint(f"[x][{url}] Couldn't get any technologies",
                     filename='', 
                     print_stdout=True)
             vulns = None
         else:
             if not cve_check:
+                cprinter.logger.info(f'[{url}] No cve check')
                 vulns = None
             else:
+                cprinter.logger.info(f'[{url}] cve check chosen')
+                found = wap_module_result['content'] 
                 # Analyze the foundings by Wappalyzer and start CMS scan if asked
                 vulns = await analyze_found(url, found, cms_scan, directory, executor)
-                #print(f"[i] [{url}] vulns done")
-        screen_path, title, screen_content = await future_selenium
-        check = Check(url, directory, screen_path, screen_content, title, found, vulns)
+                # Gathering result from modules
+                #modules.append(vulns.result())
+                cprinter.logger.info(f"[{url}] vulns done")
+        cprinter.logger.info(f'[{url}] Waiting for selenium workflow to end')
+        selenium_workflow_results = await future_selenium
+        for result in selenium_workflow_results:
+            if result['name'] == 'selenium':
+                selenium_results = result['content']
+            else:
+                # Gathering result from modules
+                modules.append(result)
+        screen_path = selenium_results['screenshot_path']
+        title = selenium_results['title']
+        screen_content = selenium_results['screenshot']
+        cprinter.logger.debug(f'[{url}] {selenium_workflow_results}')
+        cprinter.logger.info(f'[{url}] Creating Check object')
+        check = Check(url, directory, screen_path, screen_content, title, vulns, modules) 
         return check
     except:
+        cprinter.logger.exception()
         traceback.print_exc()
-
 
 def check_website(url, cms_scan, cve_check, progress_file_lock, counter):
     try:
-        cprint("\033[94m[+] Scanning {0}\033[0m".format(url),
-                filename='', print_stdout=True)
+        cprinter.logger.info(f'[{url}] Started scanning')
+        cprinter.info(string="Started scanning", url=url)
         # Getting hostname to create report file    
         parsed_url = urlparse(url)
         directory = "{0}/{1}".format(base_dir, parsed_url.netloc)
@@ -760,14 +300,14 @@ def check_website(url, cms_scan, cve_check, progress_file_lock, counter):
         title = None
         container = None
         loop = asyncio.new_event_loop()
-        check = loop.run_until_complete(check_workflow(url, cms_scan, cve_check, directory)) 
-        cprint('[i] [{url}] Workflow is over'.format(url=url),
-                filename='', 
-                print_stdout=True)
+        check = loop.run_until_complete(check_workflow(url, cms_scan, cve_check, directory))
+        cprinter.logger.info(f'[{url}] Scan is over')
+        cprinter.info('Workflow is over', url=url)
         with progress_file_lock:
             print(check.__dict__, file=open("{base_dir}/.webcheckr".format(base_dir=base_dir), 'a'))
         return check
     except:
+        cprinter.logger.exception()
         traceback.print_exc()
 
 
@@ -775,22 +315,30 @@ def finished_check(result):
     '''
     Callback function for finished checks.
     '''
-    checks.append(result)
-    pbar.update()
-    counter.value += 1
+    try:
+        cprinter.logger.debug(f'callback {result}')
+        checks.append(result)
+        pbar.update()
+        counter.value += 1
+    except Exception as e:
+        cprinter.logger.error(e)
 
-def init(arg1, arg2):
+def init(arg1, arg2, arg3):
     '''
     Initiate processes with useful globals.
     '''
     global pbar
     global counter
+    global cprinter
     pbar = arg1
     counter = arg2
+    cprinter = arg3
 
 if __name__ == "__main__":
     parser  = argparse.ArgumentParser(description="WebCheckr - Initial check for web pentests")
-    parser.add_argument('-d', '--directory_bf', action='store', help='Launch directory bruteforce with provided wordlist. File has to be in current directory, docker reasons.')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output in log file')
+    parser.add_argument('-d', '--debug', action='store_true', help='Enable debug output in log file')
+    parser.add_argument('-b', '--directory_bf', action='store', help='Launch directory bruteforce with provided wordlist. File has to be in current directory, docker reasons.')
     parser.add_argument('-l', '--launch_cve_docker', action='store_true', help='Launch cve-search docker. To start it manually: docker start cvesearch_docker')
     parser.add_argument('-n', '--no_cve_check', action='store_true', help='Do not ceck cves for the technologies found')
     parser.add_argument('-c', '--cms_scan', action='store_true', help='Launch CMS scanner if detected. Supported: Wordpress, Joomla, Drupal')
@@ -817,18 +365,24 @@ if __name__ == "__main__":
         nmap_file = os.path.join(docker_path, args.nmap_file)
     concurrent_targets = int(args.concurrent_targets)
     timeout = int(args.timeout)
-    directory = args.output_dir if args.output_dir else 'webcheckr'
+    directory = args.output_dir if args.output_dir else 'results'
     base_dir = os.path.join(os.getcwd(), docker_path,  directory)
+    verbose = args.verbose
+    debug = args.debug
+    logfile = f'{base_dir}/webcheckr.log'
+    if not os.path.exists(base_dir):
+        os.makedirs(base_dir)
+    logger = init_logging(verbose=verbose, debug=debug, logfile=logfile)
     # L33t banner
     print_banner()
     # Sanitize the list of urls
     loop = asyncio.get_event_loop()
     urls = loop.run_until_complete(url_sanitize(urls_file, url, nmap_file, timeout))
     for url in urls:
+        logger.info(url)
         print(url)
     nb_urls = len(urls)
     checks = []
-    # Restrict the number of ports used for selenium. Also make sure we lock it. A queue to
     manager = multiprocessing.Manager()
     progress_file_lock = manager.Lock()
     counter = manager.Value('i', 0)
@@ -837,28 +391,31 @@ if __name__ == "__main__":
         # Start cve-search docker
         if cve_check:
             cve_search = cve_search_start(launch_cve_docker)
-        print('[+] Starting checking')
+        print('[+] Starting checking') 
         pbar = tqdm(total=nb_urls, desc='Progress', position=1)
+        cprinter = Cprinter(base_dir, pbar, counter, logger)
         try:
             with multiprocessing.Pool(concurrent_targets, initializer=init, 
-                    initargs=(pbar, counter,  )) as pool:
+                    initargs=(pbar, counter, cprinter, )) as pool:
                 for url in urls:
                     pool.apply_async(check_website, 
                             args=(url, cms_scan, cve_check, progress_file_lock, counter,),
                             callback=finished_check)
                 pool.close()
                 pool.join()
-        except:
+        except Exception as e:
+            cprinter.logger.error(e)
             pool.terminate()
         # Output the results
         pbar.close()
+        cprinter.logger.info("Checks finished")
+        cprinter.logger.debug(checks)
         print()
         for check in checks:
             if check:
                 print(check.to_string())
         # Write html report
-        to_write = write_html(checks)
-        open("{base_dir}/report.html".format(base_dir=base_dir), "w").write(report.format(to_write))
+        to_write = write_html(base_dir, checks)
         print("[+] Html report written to report.html")
     except:
         traceback.print_exc()
@@ -866,8 +423,4 @@ if __name__ == "__main__":
         print("Shutting down every containers...")
         if launch_cve_docker:
             remove_container(cve_search)
-        client = docker.from_env()
-        while client.containers.list(filters={'name': 'webcheckr_'}):
-            print("Containers found, killing them")
-            for container in client.containers.list(filters={'name': 'webcheckr_'}):
-                remove_container(container)
+        cleanup_webcheckr_dockers()

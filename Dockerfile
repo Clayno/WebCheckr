@@ -6,9 +6,10 @@ RUN apk update && apk upgrade \
 			libc-dev \
 	&& rm -rf /var/cache/apk/*
 # Copying files and running pip
-COPY . /webcheckr
+COPY requirements.txt /webcheckr/
 WORKDIR /webcheckr
-RUN chmod -R 777 /webcheckr
 RUN pip install --upgrade pip && pip install -r requirements.txt
+COPY . /webcheckr
+RUN chmod -R 777 /webcheckr
 
 ENTRYPOINT ["python", "webcheckr.py"]
