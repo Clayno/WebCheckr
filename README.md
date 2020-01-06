@@ -33,7 +33,7 @@ run startup.sh, sudo is required during install
 <h2>Run</h2>
 
 ```
-docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock -v ${PWD}:/webcheckr/data --user $(id -u):$(id -g) --group-add $(stat -c '%g' /var/run/docker.sock) --net webcheckr webcheckr [OPTIONS]
+docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock -v ${PWD}:/webcheckr/shared --user $(id -u):$(id -g) --group-add $(stat -c '%g' /var/run/docker.sock) --net webcheckr webcheckr [OPTIONS]
 ```
 
 OR if setup was used
