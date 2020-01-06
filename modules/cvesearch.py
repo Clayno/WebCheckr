@@ -38,7 +38,7 @@ def cve_search_start(launch_cve_docker):
         sleep(2)
     return container
 
-def query_cve(name, version, container, directory, cprinter):
+def query_cve(url, name, version, container, directory, cprinter):
     """
     Runs a search in the CVE-search container.
 

@@ -23,6 +23,7 @@ from time import sleep
 # Custom modules
 from modules.credscheckr import CredsCheckrModule
 from modules.wappalyzer import WappalyzerModule
+from modules.dirsearch import DirsearchModule
 from modules.cvesearch import cve_search_start, query_cve
 from modules.selenium import selenium_start, SeleniumModule
 from helpers.cprint import Cprinter
@@ -124,7 +125,7 @@ def init_logging(verbose=False, debug=False, logfile=None):
 
     return logger
 
-def selenium_workflow(url, directory):
+def selenium_workflow(url, directory, dirsearch):
     class SeleniumThreadExecutor:
         def __init__(self, thread_num):
             self.results = []
@@ -147,15 +148,21 @@ def selenium_workflow(url, directory):
     
     try:
         driver, container = selenium_start()
-        credentials_filename = '/webcheckr/data/creds.lst'
-        selenium_module = SeleniumModule(url, directory, driver, cprinter)
-        credscheckr_module = CredsCheckrModule(url, credentials_filename, 
-                container.name, 4444, cprinter)
         try:
+            modules = []
+            credentials_filename = '/webcheckr/data/creds.lst'
+            selenium_module = SeleniumModule(url, directory, driver, cprinter)
+            credscheckr_module = CredsCheckrModule(url, credentials_filename, 
+                    container.name, 4444, cprinter)
+            modules.append(selenium_module)
+            modules.append(credscheckr_module)
+            if dirsearch:
+                dirsearch_module = DirsearchModule(url, directory, cprinter)
+                modules.append(dirsearch_module)
             executor = SeleniumThreadExecutor(5)
             # Schedule all the tasks to do with Selenium
-            executor.schedule(credscheckr_module.run)
-            executor.schedule(selenium_module.run)
+            for module in modules:
+                executor.schedule(module.run)
             executor.wait()
         except:
             traceback.print_exc()
@@ -173,13 +180,13 @@ def selenium_workflow(url, directory):
     return executor.results
 
 
-async def request_async(executor, query_cve, name, 
+async def request_async(executor, query_cve, url, name, 
                     version, cve_search, directory, cprinter):
     '''
     Workaround in analyze_found to launch threads.
     '''
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(executor, query_cve, name, 
+    return await loop.run_in_executor(executor, query_cve, url, name, 
                     version, cve_search, directory, cprinter)
 
 async def analyze_found(url, found, cms_scan, directory, executor):
@@ -204,7 +211,7 @@ async def analyze_found(url, found, cms_scan, directory, executor):
             for tech in l:
                 name, version = tech.split(':', 1)
                 if version and version!="None" and version != "":
-                    future_vulns.append(request_async(executor, query_cve, name, 
+                    future_vulns.append(request_async(executor, query_cve, url, name, 
                         version, cve_search, directory, cprinter))
         results = await asyncio.gather(*future_vulns)
         results_parsed = {}
@@ -237,14 +244,15 @@ async def analyze_found(url, found, cms_scan, directory, executor):
     except:
         traceback.print_exc()
 
-async def check_workflow(url, cms_scan, cve_check, directory):
+async def check_workflow(url, cms_scan, cve_check, dirsearch, directory):
     try:
         # Initialize modules
         wappalyzer_module = WappalyzerModule(url, cprinter.logger)
         modules = []
         executor = ThreadPoolExecutor(20)
         loop = asyncio.get_running_loop()
-        future_selenium = loop.run_in_executor(executor, selenium_workflow, url, directory)
+        future_selenium = loop.run_in_executor(executor, selenium_workflow, url, directory, 
+                dirsearch)
         # Start analyzing web application
         found = await loop.run_in_executor(executor, wappalyzer_module.run)
         # Gathering results from modules
@@ -287,20 +295,21 @@ async def check_workflow(url, cms_scan, cve_check, directory):
         cprinter.logger.exception()
         traceback.print_exc()
 
-def check_website(url, cms_scan, cve_check, progress_file_lock, counter):
+def check_website(url, cms_scan, cve_check, dirsearch, progress_file_lock, counter):
     try:
         cprinter.logger.info(f'[{url}] Started scanning')
         cprinter.info(string="Started scanning", url=url)
         # Getting hostname to create report file    
         parsed_url = urlparse(url)
-        directory = "{0}/{1}".format(base_dir, parsed_url.netloc)
+        directory = os.path.join(base_dir, parsed_url.netloc)
         if not os.path.exists(directory):
             os.makedirs(directory)
         screen_path = None
         title = None
         container = None
         loop = asyncio.new_event_loop()
-        check = loop.run_until_complete(check_workflow(url, cms_scan, cve_check, directory))
+        check = loop.run_until_complete(check_workflow(url, cms_scan, cve_check, dirsearch, 
+            directory))
         cprinter.logger.info(f'[{url}] Scan is over')
         cprinter.info('Workflow is over', url=url)
         with progress_file_lock:
@@ -338,7 +347,7 @@ if __name__ == "__main__":
     parser  = argparse.ArgumentParser(description="WebCheckr - Initial check for web pentests")
     parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output in log file')
     parser.add_argument('-d', '--debug', action='store_true', help='Enable debug output in log file')
-    parser.add_argument('-b', '--directory_bf', action='store', help='Launch directory bruteforce with provided wordlist. File has to be in current directory, docker reasons.')
+    parser.add_argument('-b', '--directory_bf', action='store_true', help='Launch directory bruteforce with provided wordlist. File has to be in current directory, docker reasons.', default=False)
     parser.add_argument('-l', '--launch_cve_docker', action='store_true', help='Launch cve-search docker. To start it manually: docker start cvesearch_docker')
     parser.add_argument('-n', '--no_cve_check', action='store_true', help='Do not ceck cves for the technologies found')
     parser.add_argument('-c', '--cms_scan', action='store_true', help='Launch CMS scanner if detected. Supported: Wordpress, Joomla, Drupal')
@@ -399,7 +408,8 @@ if __name__ == "__main__":
                     initargs=(pbar, counter, cprinter, )) as pool:
                 for url in urls:
                     pool.apply_async(check_website, 
-                            args=(url, cms_scan, cve_check, progress_file_lock, counter,),
+                            args=(url, cms_scan, cve_check, directory_bf, progress_file_lock, 
+                                counter,),
                             callback=finished_check)
                 pool.close()
                 pool.join()
@@ -410,10 +420,10 @@ if __name__ == "__main__":
         pbar.close()
         cprinter.logger.info("Checks finished")
         cprinter.logger.debug(checks)
-        print()
-        for check in checks:
-            if check:
-                print(check.to_string())
+        #print()
+        #for check in checks:
+        #    if check:
+        #        print(check.to_string())
         # Write html report
         to_write = write_html(base_dir, checks)
         print("[+] Html report written to report.html")
