@@ -204,7 +204,7 @@ async def analyze_found(url, found, cms_scan, directory, executor):
             for tech in l:
                 name, version = tech.split(':', 1)
                 if version and version!="None" and version != "":
-                    future_vulns.append(request_async(executor, query_cve, name, 
+                    future_vulns.append(request_async(executor, query_cve, url, name, 
                         version, cve_search, directory, cprinter))
         results = await asyncio.gather(*future_vulns)
         results_parsed = {}
