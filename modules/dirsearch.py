@@ -8,7 +8,7 @@ import os
 class DirsearchModule(WebcheckrModule):
     response = None
     result = None
-    docker_image = "dirsearch"
+    docker_image = "clayno/dirsearch"
     docker_command = "-E -u {0} --json-report=/tmp/output/dirsearch.json"
     
     def __init__(self, url, directory, cprinter):
