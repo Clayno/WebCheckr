@@ -55,7 +55,7 @@ def selenium_start():
         docker_ids.append(container)
         while 1:
             try:
-                resp = requests.get('http://127.0.0.1:5007/wd/hub/status').json()
+                resp = requests.get('http://127.0.0.1:5007/wd/hub/status', verify=False).json()
                 if resp['value']['ready'] == True:
                     break
             except:
@@ -177,7 +177,7 @@ def get_form_objects(driver):
 def is_login_page(driver, url):
     answer = {'url': url,
             'scheme': None}
-    response = requests.get(url)
+    response = requests.get(url, verify=False)
     if 'www-authenticate' in response.headers.keys():
         if response.headers['www-authenticate'].startswith("Basic "):
             answer['scheme'] = 'basic_auth'
