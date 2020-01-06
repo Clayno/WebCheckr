@@ -19,7 +19,7 @@ def selenium_start():
     '''
     try:
         container = docker_wrapper(docker_image, 
-                shm_size="128M")
+                shm_size="256M")
         while 1:
             try:
                 resp = requests.get('http://{name}:4444/wd/hub/status'
@@ -33,8 +33,10 @@ def selenium_start():
         options.headless = True
         options.add_argument('--disable-gpu')
         options.add_argument('--windows-size=1920,1080')
+        desired_capabilities = DesiredCapabilities.CHROME.copy()
+        desired_capabilities['acceptInsecureCerts'] = True
         driver = webdriver.Remote("http://{name}:4444/wd/hub".format(name=container.name), 
-                DesiredCapabilities.CHROME, options=options)
+                desired_capabilities, options=options)
         driver.implicitly_wait(30)
         return driver, container
     except Exception as e:
@@ -75,7 +77,6 @@ class SeleniumModule(WebcheckrModule):
                     "screenshot": base64.b64encode(screen).decode()}
         except Exception as e:
             traceback.print_exc()
-            self.state = 'error'
             self.cprinter.cprint(string="[!][{url}] Couldn't take screenshot".format(url=self.url),
                 filename='',
                 print_stdout=True)

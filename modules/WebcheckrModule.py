@@ -15,9 +15,9 @@ class WebcheckrModule:
     def run(self):
         try:
             self.status = 'started'
-            logger.debug(f"[{self.url}] We are starting {self.name} module")
+            logger.info(f"[{self.url}] We are starting {self.name} module")
             self._work()
-            logger.debug(f"[{self.url}] Ending {self.name} module")
+            logger.info(f"[{self.url}] Ending {self.name} module")
             self.status = 'terminated'
             logger.debug(f"[{self.url}] {self.get_result()}")
             return self.get_result()
