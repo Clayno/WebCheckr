@@ -20,12 +20,12 @@ class WappalyzerModule(WebcheckrModule):
         # Converting json into dict => found
         found = {}
         for cell in applications:
-            key = ''.join(v for v in cell['categories'][0].values())
-            data = '{0}:{1}'.format(cell['name'], cell['version'])
-            if key in found:
-                found[key].append(data)
-            else:
-                found[key] = [data]
+            for key in cell['categories'].values():
+                data = '{0}:{1}'.format(cell['name'], cell['version'])
+                if key in found:
+                    found[key].append(data)
+                else:
+                    found[key] = [data]
         if len(found) != 0:
             self.result = found
         return found
@@ -46,7 +46,8 @@ class WappalyzerModule(WebcheckrModule):
                     self.docker_command_recursive.format(self.url))
             response = ""
             for line in container.logs(stream=True):
-                response += line.decode()
+                if line.startswith(b'{'):
+                    response += line.decode()
             # Sometimes, Wappalyzer doesn't work in recursive mode :'(
             try:
                 response = json.loads(response)
@@ -55,7 +56,8 @@ class WappalyzerModule(WebcheckrModule):
                     self.docker_command.format(self.url))
                 response = ""
                 for line in container.logs(stream=True):
-                    response += line.decode()
+                    if line.startswith(b'{'):
+                        response += line.decode()
                 # Now we have to parse the JSON response
                 try:
                     response = json.loads(response)
