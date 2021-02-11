@@ -27,7 +27,7 @@ docker network create webcheckr
 docker build -t webcheckr .
 docker create --net=webcheckr --name cvesearch_docker ttimasdf/cve-search:withdb
 docker pull selenium/standalone-chrome
-docker pull wappalyzer/cli
+docker pull clayno/wappalyzer
 docker pull clayno/dirsearch
 
 echo "Creating file in /usr/local/bin/webcheckr (need sudo)"

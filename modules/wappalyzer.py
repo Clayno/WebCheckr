@@ -7,7 +7,7 @@ import traceback
 class WappalyzerModule(WebcheckrModule):
     response = None
     result = None
-    docker_image = "wappalyzer/cli"
+    docker_image = "clayno/wappalyzer"
     docker_command = "{0}"
     docker_command_recursive = "{0} --recursive=1"
     
