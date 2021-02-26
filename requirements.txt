@@ -2,7 +2,7 @@ cdifflib
 argparse
 termcolor
 asyncio==3.4.3
-aiohttp==3.6.2
+aiohttp==3.7.4
 docker==4.0.2
 python-libnmap==0.7.0
 requests
