@@ -150,12 +150,12 @@ def selenium_workflow(url, directory, dirsearch):
         driver, container = selenium_start()
         try:
             modules = []
-            credentials_filename = '/webcheckr/data/creds.lst'
+            #credentials_filename = '/webcheckr/data/creds.lst'
             selenium_module = SeleniumModule(url, directory, driver, cprinter)
-            credscheckr_module = CredsCheckrModule(url, credentials_filename, 
-                    container.name, 4444, cprinter)
+            #credscheckr_module = CredsCheckrModule(url, credentials_filename, 
+            #        container.name, 4444, cprinter)
             modules.append(selenium_module)
-            modules.append(credscheckr_module)
+            #modules.append(credscheckr_module)
             if dirsearch:
                 dirsearch_module = DirsearchModule(url, directory, cprinter)
                 modules.append(dirsearch_module)
